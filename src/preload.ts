@@ -25,6 +25,8 @@ const browserAPI: BrowserAPI = {
   },
   setBrowserViewport: (bounds: BrowserViewportBounds): void =>
     ipcRenderer.send("browser:set-viewport", bounds),
+  setChromeOverlayActive: (active: boolean): void =>
+    ipcRenderer.send("browser:set-chrome-overlay", active),
 };
 
 contextBridge.exposeInMainWorld("browserAPI", browserAPI);
