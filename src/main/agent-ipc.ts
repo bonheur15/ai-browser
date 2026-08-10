@@ -4,6 +4,8 @@ import type { AgentRuntime } from "../ai/agent-runtime";
 import type { AgentCommand } from "../shared/agent-contracts";
 
 const COMMAND_TYPES = new Set([
+  "agent.defaults.update",
+  "agent.defaults.reset",
   "agent.thread.create",
   "agent.thread.select",
   "agent.thread.rename",
@@ -43,6 +45,10 @@ const isString = (value: unknown): value is string => typeof value === "string";
 const isAgentCommand = (value: unknown): value is AgentCommand => {
   if (!isObject(value) || !isString(value.type) || !COMMAND_TYPES.has(value.type)) return false;
   switch (value.type) {
+    case "agent.defaults.update":
+      return isAgentPolicy(value.policy);
+    case "agent.defaults.reset":
+      return true;
     case "agent.thread.create":
       return value.title === undefined || isString(value.title);
     case "agent.thread.select":
