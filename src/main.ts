@@ -5,6 +5,7 @@ import { registerBrowserIPC } from "./main/ipc";
 import { registerAgentIPC } from "./main/agent-ipc";
 import { AgentRuntime } from "./ai/agent-runtime";
 import { AgentStateStore } from "./ai/agent-state-store";
+import { AgentEvidenceStore } from "./ai/agent-evidence-store";
 import { SpaceSessionManager } from "./main/space-session-manager";
 import { SecretVault } from "./main/secret-vault";
 import { AppStateStore } from "./main/state-store";
@@ -14,6 +15,7 @@ let browserRuntime: BrowserRuntime | null = null;
 let stateStore: AppStateStore | null = null;
 let secretVault: SecretVault | null = null;
 let agentStateStore: AgentStateStore | null = null;
+let agentEvidenceStore: AgentEvidenceStore | null = null;
 let agentRuntime: AgentRuntime | null = null;
 let isQuitting = false;
 
@@ -67,6 +69,7 @@ const createWindow = async (): Promise<void> => {
   const agents = new AgentRuntime(
     runtime,
     agentStateStore!,
+    agentEvidenceStore!,
     (event) => {
       if (!window.isDestroyed()) window.webContents.send("agent:event", event);
     },
@@ -103,9 +106,11 @@ app.whenReady().then(async () => {
   stateStore = new AppStateStore(path.join(app.getPath("userData"), "app-state.json"));
   secretVault = new SecretVault(path.join(app.getPath("userData"), "vault.enc"));
   agentStateStore = new AgentStateStore(path.join(app.getPath("userData"), "agent-state.json"));
+  agentEvidenceStore = new AgentEvidenceStore(path.join(app.getPath("userData"), "agent-evidence"));
   await stateStore.load();
   await secretVault.load();
   await agentStateStore.load();
+  await agentEvidenceStore.load();
   await createWindow();
 
   app.on("activate", () => {
