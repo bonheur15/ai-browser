@@ -9,14 +9,12 @@ import type {
   CommandResult,
   CredentialSaveRequest,
   CredentialSummary,
-  BrowserPageContext,
-  BrowserPageRequest,
-  BrowserPageResponse,
   SiteRecord,
   Space,
   StoredCredential,
   Tab,
 } from "../shared/contracts";
+import type { BrowserPageContext, BrowserPageRequest, BrowserPageRequestInput, BrowserPageResponse } from "../shared/agent-contracts";
 import { AppStateStore } from "./state-store";
 import { SecretVault } from "./secret-vault";
 import { SpaceSessionManager } from "./space-session-manager";
@@ -185,7 +183,7 @@ export class BrowserRuntime {
     this.requireView(tabId).webContents.reload();
   }
 
-  async agentPageRequest(tabId: string, request: Omit<BrowserPageRequest, "requestId">): Promise<BrowserPageResponse> {
+  async agentPageRequest(tabId: string, request: BrowserPageRequestInput): Promise<BrowserPageResponse> {
     await this.activateTab(tabId);
     const view = this.requireView(tabId);
     const requestId = randomUUID();
