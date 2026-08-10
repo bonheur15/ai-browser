@@ -131,7 +131,11 @@ export class AgentStateStore {
           ...defaultState(),
           ...parsed,
           globalDefaults: normalizePolicy(parsed.globalDefaults),
-          threads: parsed.threads.map((thread) => ({ ...thread, policy: normalizePolicy(thread.policy) })),
+          threads: parsed.threads.map((thread) => ({
+            ...thread,
+            policy: normalizePolicy(thread.policy),
+            status: ["running", "starting", "waiting-for-approval"].includes(thread.status) ? "paused" : thread.status,
+          })),
         };
         if (this.state.activeThreadId && !this.state.threads.some((thread) => thread.id === this.state.activeThreadId)) {
           this.state.activeThreadId = this.state.threads[0]?.id ?? null;
@@ -276,6 +280,13 @@ export class AgentStateStore {
 
   private async writeNow(): Promise<void> {
     const state = this.getState();
+    const ephemeralThreadIds = new Set(state.threads.filter((thread) => thread.ephemeral).map((thread) => thread.id));
+    state.threads = state.threads.filter((thread) => !thread.ephemeral);
+    state.messages = state.messages.filter((message) => !ephemeralThreadIds.has(message.threadId));
+    state.actions = state.actions.filter((action) => !ephemeralThreadIds.has(action.threadId));
+    if (state.activeThreadId && ephemeralThreadIds.has(state.activeThreadId)) {
+      state.activeThreadId = state.threads[0]?.id ?? null;
+    }
     const temporaryPath = `${this.filePath}.tmp`;
     this.writeChain = this.writeChain.then(async () => {
       await mkdir(path.dirname(this.filePath), { recursive: true });
