@@ -204,6 +204,7 @@ export class CodexAppServerClient {
     try {
       parsed = JSON.parse(line);
     } catch {
+      this.rejectPending(new Error("Malformed Codex protocol message"));
       return;
     }
 
