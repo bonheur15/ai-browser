@@ -70,6 +70,17 @@ git diff --check
 Do not claim repository quality is green if a focused check passes while the full check fails.
 Report unrelated pre-existing failures separately and keep changed-file validation explicit.
 
+## Commits and releases
+
+Pull-request titles and direct commits to `main` use Conventional Commits so Release Please can
+derive semantic versions and changelog sections. Use `feat:`, `fix:`, `perf:`, `refactor:`, `docs:`,
+`test:`, `build:`, `ci:`, `chore:`, or `revert:` with a lowercase subject. Mark breaking changes
+with `type!:` or a `BREAKING CHANGE:` footer.
+
+Do not edit release versions or generated changelog sections in ordinary feature pull requests.
+Release Please owns those changes through its release pull request. The complete release and
+recovery procedure is documented in `docs/RELEASING.md`.
+
 ## Refactoring safely
 
 Refactors must preserve public IPC names, browser tool names, persisted state versioning, and
