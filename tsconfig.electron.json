@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node", "electron"]
   },
-  "include": ["src/main.ts", "src/preload.ts", "src/main/**/*.ts"]
+  "include": ["src/main.ts", "src/preload.ts", "src/main/**/*.ts", "src/ai/**/*.ts", "src/shared/**/*.ts"]
 }
