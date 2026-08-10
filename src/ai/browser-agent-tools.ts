@@ -87,12 +87,13 @@ export class BrowserAgentTools {
   async execute(threadId: string, policy: AgentPolicy, request: CodexServerRequest, callbacks: BrowserAgentCallbacks): Promise<BrowserToolResponse> {
     const toolName = request.method === "item/tool/call" && typeof request.params?.tool === "string" ? request.params.tool : "";
     const normalized = normalizeToolName(toolName);
-    const actionClass = this.actionClass(toolName);
+    let actionClass = this.actionClass(toolName);
     const args = objectValue(request.params?.arguments ?? {});
     let target: { tab?: Tab; spaceId?: string; url?: string } = {};
     let summary = normalized.replace(/_/g, " ");
     try {
       target = this.resolveTarget(args);
+      actionClass = await this.resolveActionClass(normalized, args, target, policy);
       const decision = this.policyDecision(policy, actionClass, target);
       if (!decision.allowed) {
         callbacks.onAction({ toolName: normalized, actionClass, ...target, summary: decision.reason, status: "denied" });
@@ -266,6 +267,24 @@ export class BrowserAgentTools {
     }
     const response = await this.browser.agentPageRequest(tab.id, request);
     return response.ok ? success({ type: "inputText", text: JSON.stringify(response.result ?? {}) }) : failure(response.error ?? "The page action failed");
+  }
+
+  private async resolveActionClass(normalized: string, args: JsonObject, target: { tab?: Tab }, policy: AgentPolicy): Promise<AgentActionClass> {
+    const base = this.actionClass(normalized);
+    if (policy.mode !== "guided" || !target.tab || !["click", "press_key"].includes(normalized)) return base;
+
+    const hasCoordinates = normalized === "click" && typeof args.x === "number" && typeof args.y === "number";
+    const key = typeof args.key === "string" ? args.key.toLowerCase() : "";
+    if (hasCoordinates || (normalized === "press_key" && key === "enter" && !args.ref)) return "external-side-effect";
+    if (normalized !== "click" && key !== "enter") return base;
+
+    const context = await this.browser.agentPageContext(target.tab.id);
+    const ref = typeof args.ref === "string" ? args.ref : undefined;
+    const element = ref ? context.elements.find((candidate) => candidate.ref === ref) : undefined;
+    const label = `${element?.label ?? ""} ${element?.role ?? ""}`.toLowerCase();
+    if (/\b(delete|remove|discard|cancel|sign\s*out|log\s*out|revoke)\b/.test(label)) return "destructive";
+    if (/\b(send|submit|publish|post|buy|purchase|checkout|pay|confirm|save\s+changes|change\s+password|create\s+account|sign\s*in|log\s*in|connect|authorize)\b/.test(label)) return "external-side-effect";
+    return base;
   }
 
   private resolveTarget(args: JsonObject): { tab?: Tab; spaceId?: string; url?: string } {
