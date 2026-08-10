@@ -673,7 +673,6 @@ function AgentCommandCenter({
   const [threadQuery, setThreadQuery] = useState("");
   const [showThreads, setShowThreads] = useState(true);
   const [expanded, setExpanded] = useState(false);
-  const [detached, setDetached] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.activeThreadId);
@@ -706,10 +705,20 @@ function AgentCommandCenter({
   useEffect(() => () => stopDrag(), []);
 
   return (
-    <aside className={`agent-center${expanded ? " is-expanded" : ""}${detached ? " is-detached" : ""}`} style={{ transform: detached ? `translate(calc(50% + ${position.x}px), ${position.y}px)` : `translate(${position.x}px, ${position.y}px)` }} aria-label="Agent mode">
+    <aside
+      className={`agent-center${expanded ? " is-expanded" : ""}`}
+      style={{ "--agent-x": `${position.x}px`, "--agent-y": `${position.y}px` } as React.CSSProperties}
+      aria-label="Agent command center"
+      role="dialog"
+      aria-modal="false"
+    >
       <header className="agent-center-header" onPointerDown={startDrag}>
         <div className="agent-identity"><span className="agent-orbit"><i /><i /><i /></span><div><span className="eyebrow">AGENT MODE</span><h2>Command center</h2></div></div>
-        <div className="agent-center-actions"><span className={`agent-live-dot ${isRunning ? "is-working" : ""}`} /><button type="button" title="Expand agent" onClick={() => setExpanded((value) => !value)}>{expanded ? "↙" : "↗"}</button><button type="button" title="Detach agent" onClick={() => setDetached((value) => !value)}>{detached ? "▣" : "⌗"}</button><button type="button" title="Close agent" onClick={onClose}>×</button></div>
+        <div className="agent-center-actions">
+          <span className={`agent-live-status ${isRunning ? "is-working" : ""}`}><i className="agent-live-dot" /><span>{isRunning ? "Working" : "Ready"}</span></span>
+          <button className="agent-header-action" type="button" aria-label={expanded ? "Use focused layout" : "Expand command center"} title={expanded ? "Use focused layout" : "Expand command center"} onClick={() => setExpanded((value) => !value)}>{expanded ? "↙" : "↗"}</button>
+          <button className="agent-header-close" type="button" aria-label="Close command center" title="Close command center" onClick={onClose}>×</button>
+        </div>
       </header>
 
       <div className="agent-mode-banner"><div><strong>{isRunning ? "Working across your browser" : "Ready when you are"}</strong><small>{lockedTabs.length ? `${lockedTabs.length} tab${lockedTabs.length === 1 ? "" : "s"} protected while I work` : "Your tabs stay yours until you give me a task"}</small></div><span className="agent-banner-spark">✦</span></div>
@@ -786,7 +795,7 @@ function App() {
     observer.observe(element);
     updateBounds();
     return () => observer.disconnect();
-  }, [drawer, agentOpen]);
+  }, [drawer]);
 
   const dispatch = (command: BrowserCommand): void => {
     if (command.type === "credential.reject") setCredentialPrompt(null);
@@ -859,11 +868,11 @@ function App() {
         <SpaceRail snapshot={snapshot} onScope={selectScope} onCreate={() => setSpaceDialogOpen(true)} onPrivate={() => dispatch({ type: "space.createPrivate" })} onSpaceMenu={(spaceId) => { setSpaceMenuId(spaceId); }} menuSpaceId={spaceMenuId} onRename={renameSpace} onDelete={deleteSpace} />
         <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} maximized={maximized} agentOpen={agentOpen} onDispatch={dispatch} onOpenVault={() => { setAgentOpen(false); setDrawer(drawer === "vault" ? null : "vault"); }} onOpenSite={openSite} onToggleAgent={() => { setDrawer(null); setAgentOpen((current) => !current); }} onToggleMaximize={() => { window.windowControls?.toggleMaximize(); setMaximized((current) => !current); }} />
         <TabDeck tabs={visibleTabs} spaces={snapshot.spaces} activeTabId={snapshot.activeTabId} onActivate={(tabId) => tabId ? dispatch({ type: "tab.activate", tabId }) : dispatch({ type: "tab.create" })} onClose={(tabId) => dispatch({ type: "tab.close", tabId })} onHibernate={(tabId) => dispatch({ type: "tab.hibernate", tabId })} onMoveTab={(tabId, spaceId, clone) => dispatch(clone ? { type: "tab.cloneToSpace", tabId, spaceId } : { type: "tab.moveToSpace", tabId, spaceId })} />
-        <div ref={viewportRef} className={`browser-viewport${drawer ? " has-drawer" : ""}${agentOpen ? " has-agent" : ""}`} aria-label="Browser surface"><div className="viewport-fallback"><span className="fallback-orb">✦</span><strong>Choose a surface</strong><small>Open a tab or select a Space to begin.</small></div></div>
+        <div ref={viewportRef} className={`browser-viewport${drawer ? " has-drawer" : ""}`} aria-label="Browser surface"><div className="viewport-fallback"><span className="fallback-orb">✦</span><strong>Choose a surface</strong><small>Open a tab or select a Space to begin.</small></div></div>
         <BottomStatusToolbar snapshot={snapshot} runtimeStatus={runtimeStatus} agentSnapshot={agentSnapshot} activeTab={activeTab} activeSpace={activeSpace} />
         {drawer === "vault" && <VaultDrawer snapshot={snapshot} onDispatch={(command) => { if (command.type === "site.inspect") openSiteFromVault(command.siteId); else dispatch(command); }} onClose={() => setDrawer(null)} />}
         {drawer === "site" && <SiteDrawer snapshot={{ ...snapshot, drawer: "site" }} onDispatch={dispatch} onClose={() => setDrawer(null)} />}
-        {agentOpen && <AgentCommandCenter snapshot={agentSnapshot} browserSnapshot={snapshot} onDispatch={dispatchAgent} onClose={() => setAgentOpen(false)} onActivateTab={(tabId) => dispatch({ type: "tab.activate", tabId })} />}
+        {agentOpen && <div className="agent-layer"><AgentCommandCenter snapshot={agentSnapshot} browserSnapshot={snapshot} onDispatch={dispatchAgent} onClose={() => setAgentOpen(false)} onActivateTab={(tabId) => dispatch({ type: "tab.activate", tabId })} /></div>}
         {credentialPrompt && promptSpace && <PromptCard request={credentialPrompt} spaceName={promptSpace.name} onDispatch={dispatch} />}
         {toast && <div className={`toast toast-${toast.tone}`} role="status"><span>{toast.tone === "error" ? "!" : "✓"}</span>{toast.message}</div>}
       </div>
