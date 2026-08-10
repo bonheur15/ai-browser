@@ -16,6 +16,7 @@ import { CodexAppServerClient, defaultBrowserDeveloperInstructions, extractThrea
 import { BrowserAgentTools } from "./browser-agent-tools";
 import { AgentPolicyEngine, isAgentPolicy } from "./agent-policy";
 import { AgentStateStore, normalizePolicy } from "./agent-state-store";
+import { AgentEvidenceStore } from "./agent-evidence-store";
 import { BrowserRuntime } from "../main/browser-runtime";
 
 type PendingApproval = {
@@ -48,6 +49,7 @@ export class AgentRuntime {
   constructor(
     private readonly browser: BrowserRuntime,
     private readonly state: AgentStateStore,
+    private readonly evidence: AgentEvidenceStore,
     private readonly emit: (event: AgentEvent) => void,
   ) {
     this.policies = new AgentPolicyEngine(() => this.browser.snapshot());
@@ -67,7 +69,7 @@ export class AgentRuntime {
     return {
       getSnapshot: async () => this.snapshot(),
       dispatch: (command) => this.dispatch(command),
-      getEvidence: async () => null,
+      getEvidence: (id) => this.getEvidence(id),
       subscribe: () => () => undefined,
     };
   }
@@ -89,8 +91,18 @@ export class AgentRuntime {
     };
   }
 
-  async getEvidence(_id: string): Promise<null> {
-    return null;
+  async getEvidence(id: string) {
+    const result = await this.evidence.get(id);
+    if (!result) return null;
+    return {
+      id: result.record.id,
+      threadId: result.record.threadId,
+      kind: "screenshot" as const,
+      title: result.record.title,
+      url: result.record.url,
+      createdAt: result.record.createdAt,
+      dataUrl: result.dataUrl,
+    };
   }
 
   async dispatch(command: AgentCommand): Promise<AgentCommandResult> {
@@ -114,11 +126,12 @@ export class AgentRuntime {
     for (const pending of this.pendingApprovals.values()) pending.resolve(false);
     this.pendingApprovals.clear();
     await this.client.stop();
+    await this.evidence.flush();
     await this.state.flush();
   }
 
   async flush(): Promise<void> {
-    await this.state.flush();
+    await Promise.all([this.state.flush(), this.evidence.flush()]);
   }
 
   private async execute(command: AgentCommand): Promise<void> {
@@ -137,6 +150,7 @@ export class AgentRuntime {
         return;
       case "agent.thread.delete":
         this.stopApprovals(command.threadId);
+        await this.evidence.removeForThread(command.threadId);
         this.state.removeThread(command.threadId);
         return;
       case "agent.message.send":
@@ -266,7 +280,18 @@ export class AgentRuntime {
     return this.tools.execute(thread.id, thread.policy, request, {
       requestApproval: (input) => this.requestApproval(thread.id, input),
       onAction: (input) => this.recordAction(thread.id, input),
+      onEvidence: (input) => { void this.saveEvidence(thread.id, input); },
     });
+  }
+
+  private async saveEvidence(threadId: string, input: { tabId: string; spaceId: string; title: string; url: string; dataUrl: string }): Promise<void> {
+    const thread = this.state.getThread(threadId);
+    if (!thread || thread.ephemeral) return;
+    const record = await this.evidence.save({ threadId, title: input.title, url: input.url, dataUrl: input.dataUrl });
+    if (!record) return;
+    this.state.appendMessage({ threadId, role: "tool", kind: "action", text: "Screenshot evidence captured", evidenceIds: [record.id] });
+    this.emit({ type: "agent.evidence", evidence: { id: record.id, threadId: record.threadId, kind: "screenshot", title: record.title, url: record.url, createdAt: record.createdAt } });
+    this.publish();
   }
 
   private async requestApproval(threadId: string, input: { actionClass: AgentApprovalRequest["actionClass"]; summary: string; spaceId?: string; tabId?: string }): Promise<boolean> {
