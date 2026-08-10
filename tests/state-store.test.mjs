@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -67,6 +67,43 @@ test("the last persistent Space cannot be deleted", async () => {
     assert.equal(store.removeSpace("personal"), true);
     assert.equal(store.removeSpace("work"), false);
     await store.flush();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("migrates version-one state and persists appearance settings", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ai-browser-settings-"));
+  try {
+    const statePath = path.join(directory, "app-state.json");
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 1,
+        spaces: [],
+        tabs: [],
+        bookmarks: [],
+        sites: [],
+        scope: "all",
+        activeSpaceId: "",
+        activeTabId: null,
+        drawer: null,
+        selectedSiteId: null,
+      }),
+      "utf8",
+    );
+    const store = new AppStateStore(statePath);
+    await store.load();
+    assert.equal(store.getState().version, 2);
+    assert.deepEqual(store.getState().settings.appearance, { mode: "dark", accent: "mint" });
+
+    store.update((state) => {
+      state.settings.appearance = { mode: "light", accent: "violet" };
+    });
+    await store.flush();
+    const persisted = JSON.parse(await readFile(statePath, "utf8"));
+    assert.equal(persisted.version, 2);
+    assert.deepEqual(persisted.settings.appearance, { mode: "light", accent: "violet" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
