@@ -48,6 +48,9 @@ export const registerBrowserIPC = (window: BrowserWindow, runtime: BrowserRuntim
   ipcMain.on("browser:credential-fill-result", (event, result: unknown) => {
     runtime.handleCredentialFillResult(event.sender, result);
   });
+  ipcMain.on("browser:agent-page-response", (event, response: unknown) => {
+    runtime.handleAgentPageResponse(event.sender, response);
+  });
 
   window.on("closed", () => {
     ipcMain.removeHandler("browser:get-snapshot");
@@ -55,6 +58,7 @@ export const registerBrowserIPC = (window: BrowserWindow, runtime: BrowserRuntim
     ipcMain.removeAllListeners("browser:set-viewport");
     ipcMain.removeAllListeners("browser:login-candidate");
     ipcMain.removeAllListeners("browser:credential-fill-result");
+    ipcMain.removeAllListeners("browser:agent-page-response");
   });
 };
 
