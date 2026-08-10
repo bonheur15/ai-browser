@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { app, BrowserWindow, shell, WebContentsView, type WebContents } from "electron";
+import { app, BaseWindow, shell, WebContentsView, type WebContents } from "electron";
 import type {
   AppSnapshot,
   BrowserCommand,
@@ -125,7 +125,7 @@ export class BrowserRuntime {
   private runtimeStatusTimer: NodeJS.Timeout | null = null;
 
   constructor(
-    private readonly window: BrowserWindow,
+    private readonly window: BaseWindow,
     private readonly state: AppStateStore,
     private readonly sessions: SpaceSessionManager,
     private readonly vault: SecretVault,
@@ -152,6 +152,12 @@ export class BrowserRuntime {
   dispose(): void {
     if (this.runtimeStatusTimer) clearInterval(this.runtimeStatusTimer);
     this.runtimeStatusTimer = null;
+    for (const view of this.views.values()) {
+      this.window.contentView.removeChildView(view);
+      if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false });
+    }
+    this.views.clear();
+    this.attachedTabId = null;
   }
 
   private currentRuntimeStatus(): BrowserRuntimeStatus {
@@ -865,8 +871,7 @@ export class BrowserRuntime {
       const previous = this.views.get(this.attachedTabId);
       if (previous) this.window.contentView.removeChildView(previous);
     }
-    // Keep native page surfaces beneath the React chrome so floaty overlays
-    // such as the bottom status toolbar can render above the page.
+    // Keep native page surfaces below the full-size chrome WebContentsView.
     this.window.contentView.removeChildView(next);
     this.window.contentView.addChildView(next, 0);
     this.attachedTabId = tabId;
