@@ -4,6 +4,7 @@ import type {
   AppSnapshot,
   BrowserCommand,
   BrowserEvent,
+  BrowserRuntimeStatus,
   CredentialSaveRequest,
   Space,
   SpaceScope,
@@ -71,6 +72,142 @@ const iconFor = (icon: string): string => ({
   "eye-off": "◌",
   sparkles: "✦",
 }[icon] ?? "✦");
+
+const emptyRuntimeStatus: BrowserRuntimeStatus = {
+  activeTabId: null,
+  memoryUsageMb: null,
+  security: "special",
+  securityMessage: "This is a browser-generated or special page",
+  loading: false,
+  sampledAt: "",
+};
+
+const agentStatusLabel = (status: AgentSnapshot["connection"]["status"]): string => ({
+  ready: "Ready",
+  starting: "Starting",
+  stopped: "Stopped",
+  missing: "Missing",
+  unauthenticated: "Unauthenticated",
+  crashed: "Crashed",
+}[status]);
+
+function BottomStatusToolbar({
+  snapshot,
+  runtimeStatus,
+  agentSnapshot,
+  activeTab,
+  activeSpace,
+}: {
+  snapshot: AppSnapshot;
+  runtimeStatus: BrowserRuntimeStatus;
+  agentSnapshot: AgentSnapshot;
+  activeTab: Tab | undefined;
+  activeSpace: Space | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const revealTimer = useRef<number | null>(null);
+  const collapseTimer = useRef<number | null>(null);
+
+  const clearTimers = (): void => {
+    if (revealTimer.current !== null) window.clearTimeout(revealTimer.current);
+    if (collapseTimer.current !== null) window.clearTimeout(collapseTimer.current);
+    revealTimer.current = null;
+    collapseTimer.current = null;
+  };
+
+  const reveal = (): void => {
+    if (collapseTimer.current !== null) window.clearTimeout(collapseTimer.current);
+    revealTimer.current = window.setTimeout(() => setOpen(true), 120);
+  };
+
+  const collapse = (): void => {
+    if (focused) return;
+    if (revealTimer.current !== null) window.clearTimeout(revealTimer.current);
+    collapseTimer.current = window.setTimeout(() => setOpen(false), 420);
+  };
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent): void => {
+      if (event.clientY >= window.innerHeight - 16) reveal();
+      else if (open && !focused) collapse();
+    };
+    const onFocusIn = (event: FocusEvent): void => {
+      if ((event.target as HTMLElement | null)?.closest(".bottom-status-toolbar")) {
+        clearTimers();
+        setFocused(true);
+        setOpen(true);
+      }
+    };
+    const onFocusOut = (): void => {
+      window.setTimeout(() => {
+        const inside = document.activeElement?.closest(".bottom-status-toolbar") !== null;
+        setFocused(inside);
+        if (!inside) collapse();
+      }, 0);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape" && open && !focused) {
+        clearTimers();
+        setOpen(false);
+      }
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("focusin", onFocusIn);
+    window.addEventListener("focusout", onFocusOut);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      clearTimers();
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("focusout", onFocusOut);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [focused, open]);
+
+  const tabCount = snapshot.tabs.filter((tab) => tab.spaceId === activeSpace?.id).length;
+  const securityLabel = runtimeStatus.security === "secure" ? "Secure" : runtimeStatus.security === "not-secure" ? "Not secure" : "Special page";
+  const memoryLabel = runtimeStatus.memoryUsageMb === null ? "RAM unavailable" : `${runtimeStatus.memoryUsageMb.toFixed(1)} MB RAM`;
+  const connectionStatus = agentSnapshot.connection.status;
+
+  return (
+    <section
+      className={`bottom-status-toolbar${open ? " is-open" : ""}`}
+      aria-label="Browser status"
+      tabIndex={0}
+      onPointerEnter={() => { clearTimers(); setOpen(true); }}
+      onPointerLeave={collapse}
+      onFocusCapture={() => { clearTimers(); setFocused(true); setOpen(true); }}
+      onBlurCapture={() => window.setTimeout(() => { if (!document.activeElement?.closest(".bottom-status-toolbar")) { setFocused(false); collapse(); } }, 0)}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="bottom-status-inner">
+        <div className="bottom-status-context" title={activeTab?.url ?? "No active page"}>
+          <span className="bottom-status-glyph">◈</span>
+          <span className="bottom-status-copy"><strong>{activeSpace?.name ?? "All Spaces"}</strong><small>{activeTab?.title ?? "No active page"} · {tabCount} tabs</small></span>
+        </div>
+        <span className="bottom-status-divider" />
+        <div className={`bottom-status-item status-security-${runtimeStatus.security}`} title={runtimeStatus.securityMessage} aria-label={`${securityLabel}: ${runtimeStatus.securityMessage}`}>
+          <span className="bottom-status-dot" />
+          <span><strong>{securityLabel}</strong><small>Page security</small></span>
+        </div>
+        <div className="bottom-status-item" title={runtimeStatus.loading ? "The active page is loading" : "The active page is loaded"} aria-label={runtimeStatus.loading ? "Page is loading" : "Page is loaded"}>
+          <span className={`bottom-status-load${runtimeStatus.loading ? " is-loading" : ""}`}>{runtimeStatus.loading ? "◌" : "✓"}</span>
+          <span><strong>{runtimeStatus.loading ? "Loading" : "Ready"}</strong><small>Browser state</small></span>
+        </div>
+        <div className="bottom-status-item" title="Aggregate Electron browser process memory usage" aria-label={memoryLabel}>
+          <span className="bottom-status-memory">▥</span>
+          <span><strong>{memoryLabel}</strong><small>Browser usage</small></span>
+        </div>
+        <span className="bottom-status-divider" />
+        <div className={`bottom-status-item status-agent-${connectionStatus}`} title={`AI connection: ${agentStatusLabel(connectionStatus)}`} aria-label={`AI connection ${agentStatusLabel(connectionStatus)}`}>
+          <span className="bottom-status-ai">✧</span>
+          <span><strong>AI {agentStatusLabel(connectionStatus)}</strong><small>Connection</small></span>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 const hostFor = (value: string): string => {
   try {
@@ -307,15 +444,16 @@ function TabDeck({
         {tabs.map((tab) => {
           const space = spaceMap.get(tab.spaceId);
           return (
-            <div className={`tab-card${tab.id === activeTabId ? " is-active" : ""}${tab.status === "hibernated" ? " is-hibernated" : ""}`} key={tab.id}>
-              <button className="tab-main" type="button" onClick={() => onActivate(tab.id)} title={`${tab.title} · ${space?.name ?? "Space"}`}>
+            <div className={`tab-card${tab.id === activeTabId ? " is-active" : ""}${tab.status === "hibernated" ? " is-hibernated" : ""}${tab.agentLock ? " is-agent-locked" : ""}`} key={tab.id}>
+              <button className="tab-main" type="button" onClick={() => onActivate(tab.id)} disabled={Boolean(tab.agentLock)} title={tab.agentLock ? "Agent is using this tab" : `${tab.title} · ${space?.name ?? "Space"}`}>
                 <span className="tab-favicon" style={{ "--space-color": space?.color ?? "#9be7c4" } as React.CSSProperties}>{tab.faviconUrl ? <img src={tab.faviconUrl} alt="" /> : <span>{tab.status === "hibernated" ? "z" : "·"}</span>}</span>
-                <span className="tab-copy"><strong>{tab.title || "New tab"}</strong><small>{hostFor(tab.url)}</small></span>
+                <span className="tab-copy"><strong>{tab.title || "New tab"}</strong><small>{tab.agentLock ? "Agent is working here" : hostFor(tab.url)}</small></span>
                 <span className="tab-space-label">{space?.name ?? "Unknown"}</span>
               </button>
-              <button className="tab-action tab-move" type="button" onClick={() => setMoveTabId(moveTabId === tab.id ? null : tab.id)} aria-label={`Move ${tab.title} to another Space`} title="Move or clone tab">↗</button>
-              <button className="tab-action tab-sleep" type="button" onClick={() => onHibernate(tab.id)} aria-label={`Hibernate ${tab.title}`} title="Hibernate tab">z</button>
-              <button className="tab-action" type="button" onClick={() => onClose(tab.id)} aria-label={`Close ${tab.title}`} title="Close tab">×</button>
+              <span className="tab-agent-lock" aria-label="Locked by agent" title="Agent is using this tab">✦</span>
+              <button className="tab-action tab-move" type="button" disabled={Boolean(tab.agentLock)} onClick={() => setMoveTabId(moveTabId === tab.id ? null : tab.id)} aria-label={`Move ${tab.title} to another Space`} title="Move or clone tab">↗</button>
+              <button className="tab-action tab-sleep" type="button" disabled={Boolean(tab.agentLock)} onClick={() => onHibernate(tab.id)} aria-label={`Hibernate ${tab.title}`} title="Hibernate tab">z</button>
+              <button className="tab-action" type="button" disabled={Boolean(tab.agentLock)} onClick={() => onClose(tab.id)} aria-label={`Close ${tab.title}`} title="Close tab">×</button>
               {moveTabId === tab.id && <div className="tab-space-menu"><span>Send to another Space</span>{spaces.filter((candidate) => candidate.id !== tab.spaceId).map((target) => <div key={target.id} className="tab-space-option"><strong><i style={{ "--space-color": target.color } as React.CSSProperties} />{target.name}</strong><button type="button" onClick={() => { onMoveTab(tab.id, target.id, false); setMoveTabId(null); }}>Move</button><button type="button" onClick={() => { onMoveTab(tab.id, target.id, true); setMoveTabId(null); }}>Clone</button></div>)}</div>}
             </div>
           );
@@ -518,8 +656,85 @@ function AgentDock({
   );
 }
 
+function AgentCommandCenter({
+  snapshot,
+  browserSnapshot,
+  onDispatch,
+  onClose,
+  onActivateTab,
+}: {
+  snapshot: AgentSnapshot;
+  browserSnapshot: AppSnapshot;
+  onDispatch: (command: AgentCommand) => void;
+  onClose: () => void;
+  onActivateTab: (tabId: string) => void;
+}) {
+  const [input, setInput] = useState("");
+  const [threadQuery, setThreadQuery] = useState("");
+  const [showThreads, setShowThreads] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [detached, setDetached] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
+  const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.activeThreadId);
+  const policy = thread?.policy ?? snapshot.globalDefaults;
+  const tabMap = new Map(browserSnapshot.tabs.map((tab) => [tab.id, tab]));
+  const spaceMap = new Map(browserSnapshot.spaces.map((space) => [space.id, space]));
+  const activeTab = browserSnapshot.tabs.find((tab) => tab.id === browserSnapshot.activeTabId);
+  const isRunning = thread?.status === "running" || thread?.status === "starting" || thread?.status === "waiting-for-approval";
+  const filteredThreads = snapshot.threads.filter((candidate) => candidate.title.toLowerCase().includes(threadQuery.toLowerCase()));
+  const lockedTabs = browserSnapshot.tabs.filter((tab) => tab.agentLock);
+
+  const updatePolicy = (update: Partial<AgentPolicy>): void => {
+    if (thread) onDispatch({ type: "agent.policy.update", threadId: thread.id, policy: { ...policy, ...update } });
+  };
+  const send = (): void => {
+    if (!thread || !input.trim() || isRunning) return;
+    onDispatch({ type: "agent.message.send", threadId: thread.id, text: input.trim() });
+    setInput("");
+  };
+  const onPointerMove = (event: PointerEvent): void => {
+    if (!dragRef.current) return;
+    setPosition({ x: dragRef.current.originX + event.clientX - dragRef.current.x, y: dragRef.current.originY + event.clientY - dragRef.current.y });
+  };
+  const stopDrag = (): void => { dragRef.current = null; window.removeEventListener("pointermove", onPointerMove); window.removeEventListener("pointerup", stopDrag); };
+  const startDrag = (event: React.PointerEvent): void => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    dragRef.current = { x: event.clientX, y: event.clientY, originX: position.x, originY: position.y };
+    window.addEventListener("pointermove", onPointerMove); window.addEventListener("pointerup", stopDrag);
+  };
+  useEffect(() => () => stopDrag(), []);
+
+  return (
+    <aside className={`agent-center${expanded ? " is-expanded" : ""}${detached ? " is-detached" : ""}`} style={{ transform: detached ? `translate(calc(50% + ${position.x}px), ${position.y}px)` : `translate(${position.x}px, ${position.y}px)` }} aria-label="Agent mode">
+      <header className="agent-center-header" onPointerDown={startDrag}>
+        <div className="agent-identity"><span className="agent-orbit"><i /><i /><i /></span><div><span className="eyebrow">AGENT MODE</span><h2>Command center</h2></div></div>
+        <div className="agent-center-actions"><span className={`agent-live-dot ${isRunning ? "is-working" : ""}`} /><button type="button" title="Expand agent" onClick={() => setExpanded((value) => !value)}>{expanded ? "↙" : "↗"}</button><button type="button" title="Detach agent" onClick={() => setDetached((value) => !value)}>{detached ? "▣" : "⌗"}</button><button type="button" title="Close agent" onClick={onClose}>×</button></div>
+      </header>
+
+      <div className="agent-mode-banner"><div><strong>{isRunning ? "Working across your browser" : "Ready when you are"}</strong><small>{lockedTabs.length ? `${lockedTabs.length} tab${lockedTabs.length === 1 ? "" : "s"} protected while I work` : "Your tabs stay yours until you give me a task"}</small></div><span className="agent-banner-spark">✦</span></div>
+
+      <div className="agent-center-body">
+        {showThreads && <nav className="agent-thread-panel" aria-label="Agent threads"><div className="thread-panel-head"><div><span className="eyebrow">THREADS</span><strong>{snapshot.threads.length} conversations</strong></div><button type="button" onClick={() => onDispatch({ type: "agent.thread.create" })}>＋</button></div><label className="thread-search"><span>⌕</span><input value={threadQuery} onChange={(event) => setThreadQuery(event.target.value)} placeholder="Find a thread" aria-label="Find a thread" /></label><div className="thread-list">{filteredThreads.length === 0 ? <small className="thread-empty">No matching threads</small> : filteredThreads.map((candidate) => <div className={`thread-row${candidate.id === thread?.id ? " is-active" : ""}`} key={candidate.id}><button type="button" onClick={() => onDispatch({ type: "agent.thread.select", threadId: candidate.id })}><span className={`thread-state state-${candidate.status}`} /> <span><strong>{candidate.title}</strong><small>{candidate.status === "idle" ? "Ready" : candidate.status.replace(/-/g, " ")}</small></span></button><div className="thread-row-actions"><button type="button" title="Rename thread" onClick={() => { const title = window.prompt("Rename thread", candidate.title)?.trim(); if (title) onDispatch({ type: "agent.thread.rename", threadId: candidate.id, title }); }}>✎</button><button type="button" title="Delete thread" onClick={() => { if (window.confirm(`Delete ${candidate.title}?`)) onDispatch({ type: "agent.thread.delete", threadId: candidate.id }); }}>×</button></div></div>)}</div><div className="thread-panel-foot"><span>LOCAL THREAD MEMORY</span><button type="button" onClick={() => setShowThreads(false)}>Hide panel</button></div></nav>}
+
+        <section className="agent-chat-panel">
+          <div className="agent-chat-top"><button className="thread-toggle" type="button" onClick={() => setShowThreads((value) => !value)} title="Show or hide threads">☰</button><div className="active-thread-title"><span className="eyebrow">ACTIVE THREAD</span><strong>{thread?.title ?? "New browser task"}</strong></div>{thread && <span className={`mode-pill mode-${policy.mode}`}>{policy.mode === "full" ? "Autonomous" : policy.mode}</span>}</div>
+          {!thread ? <div className="agent-chat-empty"><span className="agent-empty-mark">✦</span><h3>Give the browser a job.</h3><p>Create a thread, then tell me what you want to accomplish. I’ll keep the active tab protected while I work.</p><button type="button" onClick={() => onDispatch({ type: "agent.thread.create" })}>Start a thread <span>↗</span></button></div> : <>
+            <div className="agent-context-line"><span className="context-pulse" />Using <strong>{activeTab?.title || "current browser context"}</strong><small>{activeTab?.agentLock ? "protected" : "context shared"}</small></div>
+            <div className="agent-conversation" aria-live="polite">{snapshot.messages.length === 0 && <div className="agent-welcome"><span className="agent-welcome-mark">✦</span><div><strong>What should I take care of?</strong><p>Research, compare, fill, organize — you stay in control of approvals and sensitive actions.</p></div></div>}{snapshot.messages.map((message) => <div className={`agent-message agent-message-${message.role}`} key={message.id}><span className="agent-message-mark">{message.role === "user" ? "You" : message.role === "assistant" ? "AI" : "·"}</span><div className="agent-message-body"><p>{message.text || "…"}</p>{message.evidenceIds && <div className="agent-evidence-list">{message.evidenceIds.map((id) => <EvidencePreview id={id} key={id} />)}</div>}</div></div>)}{snapshot.approvalRequests.map((request) => <div className="agent-approval" key={request.id}><span className="eyebrow">NEEDS YOUR APPROVAL</span><strong>{request.summary}</strong><small>{request.actionClass.replace(/-/g, " ")}{request.tabId && tabMap.get(request.tabId) ? ` · ${tabMap.get(request.tabId)?.title}` : ""}</small><div><button type="button" onClick={() => onDispatch({ type: "agent.approval.respond", threadId: request.threadId, approvalId: request.id, approved: true })}>Allow once</button><button type="button" onClick={() => onDispatch({ type: "agent.approval.respond", threadId: request.threadId, approvalId: request.id, approved: false })}>Deny</button></div></div>)}</div>
+            {snapshot.actions.length > 0 && <div className="agent-trace"><div className="agent-trace-heading"><span>LIVE ACTIVITY</span><small>{snapshot.actions.length} actions</small></div>{snapshot.actions.slice(-4).map((action) => <button type="button" className="agent-trace-row" key={action.id} onClick={() => action.tabId && onActivateTab(action.tabId)}><i className={`trace-status trace-${action.status}`} /><span>{action.summary}</span><small>{action.status}</small></button>)}</div>}
+            <form className="agent-composer" onSubmit={(event) => { event.preventDefault(); send(); }}><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); send(); } }} placeholder={policy.mode === "observe" ? "Ask me to inspect…" : "Tell me what to do…"} aria-label="Message the agent" rows={2} /><button type="submit" disabled={!input.trim() || isRunning}>Run <span>↗</span></button><small>⌘↵ to run · {snapshot.connection.status === "ready" ? "connected" : snapshot.connection.status}</small></form>
+          </>}
+        </section>
+      </div>
+      {thread && <details className="agent-advanced"><summary><span>Advanced controls</span><small>{policy.mode} · {thread.model}</small></summary><div className="advanced-grid"><label>Mode<select value={policy.mode} onChange={(event) => updatePolicy({ mode: event.target.value as AgentMode })}><option value="full">Autonomous</option><option value="guided">Guided</option><option value="observe">Observe only</option></select></label><label>Reasoning<select value={thread.reasoningEffort} onChange={(event) => onDispatch({ type: "agent.model.update", threadId: thread.id, model: thread.model, reasoningEffort: event.target.value as "low" | "medium" | "high" })}><option value="low">Low</option><option value="medium">Balanced</option><option value="high">High</option></select></label><label className="advanced-wide">Workspace access<button type="button" onClick={() => updatePolicy({ allowedSpaceIds: policy.allowedSpaceIds === null ? [] : null })}>{policy.allowedSpaceIds === null ? "All persistent Spaces" : `${policy.allowedSpaceIds.length} selected Spaces`}</button></label></div></details>}
+    </aside>
+  );
+}
+
 function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(emptySnapshot);
+  const [runtimeStatus, setRuntimeStatus] = useState<BrowserRuntimeStatus>(emptyRuntimeStatus);
   const [agentSnapshot, setAgentSnapshot] = useState<AgentSnapshot>(emptyAgentSnapshot);
   const [maximized, setMaximized] = useState(false);
   const [drawer, setDrawer] = useState<"vault" | "site" | null>(null);
@@ -537,6 +752,7 @@ function App() {
     void browser.getSnapshot().then(setSnapshot);
     return browser.subscribe((event) => {
       if (event.type === "snapshot") setSnapshot(event.snapshot);
+      if (event.type === "runtime-status") setRuntimeStatus(event.status);
       if (event.type === "credential-save-request") setCredentialPrompt(event.request);
       if (event.type === "toast") {
         setToast({ tone: event.tone, message: event.message });
@@ -644,9 +860,10 @@ function App() {
         <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} maximized={maximized} agentOpen={agentOpen} onDispatch={dispatch} onOpenVault={() => { setAgentOpen(false); setDrawer(drawer === "vault" ? null : "vault"); }} onOpenSite={openSite} onToggleAgent={() => { setDrawer(null); setAgentOpen((current) => !current); }} onToggleMaximize={() => { window.windowControls?.toggleMaximize(); setMaximized((current) => !current); }} />
         <TabDeck tabs={visibleTabs} spaces={snapshot.spaces} activeTabId={snapshot.activeTabId} onActivate={(tabId) => tabId ? dispatch({ type: "tab.activate", tabId }) : dispatch({ type: "tab.create" })} onClose={(tabId) => dispatch({ type: "tab.close", tabId })} onHibernate={(tabId) => dispatch({ type: "tab.hibernate", tabId })} onMoveTab={(tabId, spaceId, clone) => dispatch(clone ? { type: "tab.cloneToSpace", tabId, spaceId } : { type: "tab.moveToSpace", tabId, spaceId })} />
         <div ref={viewportRef} className={`browser-viewport${drawer ? " has-drawer" : ""}${agentOpen ? " has-agent" : ""}`} aria-label="Browser surface"><div className="viewport-fallback"><span className="fallback-orb">✦</span><strong>Choose a surface</strong><small>Open a tab or select a Space to begin.</small></div></div>
+        <BottomStatusToolbar snapshot={snapshot} runtimeStatus={runtimeStatus} agentSnapshot={agentSnapshot} activeTab={activeTab} activeSpace={activeSpace} />
         {drawer === "vault" && <VaultDrawer snapshot={snapshot} onDispatch={(command) => { if (command.type === "site.inspect") openSiteFromVault(command.siteId); else dispatch(command); }} onClose={() => setDrawer(null)} />}
         {drawer === "site" && <SiteDrawer snapshot={{ ...snapshot, drawer: "site" }} onDispatch={dispatch} onClose={() => setDrawer(null)} />}
-        {agentOpen && <AgentDock snapshot={agentSnapshot} browserSnapshot={snapshot} onDispatch={dispatchAgent} onClose={() => setAgentOpen(false)} onActivateTab={(tabId) => dispatch({ type: "tab.activate", tabId })} />}
+        {agentOpen && <AgentCommandCenter snapshot={agentSnapshot} browserSnapshot={snapshot} onDispatch={dispatchAgent} onClose={() => setAgentOpen(false)} onActivateTab={(tabId) => dispatch({ type: "tab.activate", tabId })} />}
         {credentialPrompt && promptSpace && <PromptCard request={credentialPrompt} spaceName={promptSpace.name} onDispatch={dispatch} />}
         {toast && <div className={`toast toast-${toast.tone}`} role="status"><span>{toast.tone === "error" ? "!" : "✓"}</span>{toast.message}</div>}
       </div>
