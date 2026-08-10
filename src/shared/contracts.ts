@@ -3,6 +3,18 @@ export type SpaceScope = "all" | string;
 export type TabStatus = "loading" | "loaded" | "hibernated";
 export type DrawerKind = "vault" | "site" | null;
 
+export type AppearanceMode = "dark" | "light" | "system";
+export type AccentId = "mint" | "blue" | "violet" | "amber" | "rose" | "cyan";
+
+export type AppearanceSettings = {
+  mode: AppearanceMode;
+  accent: AccentId;
+};
+
+export type AppSettings = {
+  appearance: AppearanceSettings;
+};
+
 export type Space = {
   id: string;
   name: string;
@@ -79,6 +91,7 @@ export type AppSnapshot = {
   drawer: DrawerKind;
   selectedSiteId: string | null;
   vaultAvailable: boolean;
+  settings: AppSettings;
 };
 
 export type BrowserViewportBounds = {
@@ -125,7 +138,9 @@ export type BrowserCommand =
   | { type: "credential.save"; requestId: string }
   | { type: "credential.reject"; requestId: string; neverForSite?: boolean }
   | { type: "credential.fill"; credentialId: string; tabId?: string }
-  | { type: "credential.remove"; credentialId: string };
+  | { type: "credential.remove"; credentialId: string }
+  | { type: "settings.updateAppearance"; appearance: AppearanceSettings }
+  | { type: "settings.resetAppearance" };
 
 export type CommandResult =
   | { ok: true; snapshot: AppSnapshot }
@@ -149,7 +164,7 @@ export type StoredCredential = CredentialSummary & {
 };
 
 export type PersistedState = {
-  version: 1;
+  version: 2;
   spaces: Space[];
   tabs: Tab[];
   bookmarks: Bookmark[];
@@ -159,4 +174,5 @@ export type PersistedState = {
   activeTabId: string | null;
   drawer: DrawerKind;
   selectedSiteId: string | null;
+  settings: AppSettings;
 };
