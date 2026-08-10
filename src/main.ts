@@ -101,7 +101,8 @@ app.on("before-quit", (event) => {
   if (isQuitting) return;
   event.preventDefault();
   isQuitting = true;
-  void browserRuntime?.flush().finally(() => app.quit());
+  const flush = browserRuntime?.flush() ?? Promise.resolve();
+  void flush.finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => {
