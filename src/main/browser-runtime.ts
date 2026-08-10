@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { BrowserWindow, WebContentsView, type WebContents } from "electron";
+import { BrowserWindow, shell, WebContentsView, type WebContents } from "electron";
 import type {
   AppSnapshot,
   BrowserCommand,
@@ -445,6 +445,8 @@ export class BrowserRuntime {
     view.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith("http://") || url.startsWith("https://")) {
         void this.createTab(space.id, url);
+      } else if (["mailto:", "tel:", "sms:"].some((protocol) => url.startsWith(protocol))) {
+        void shell.openExternal(url).catch(() => undefined);
       }
       return { action: "deny" };
     });
