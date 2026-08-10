@@ -119,7 +119,12 @@ export type AgentCommand =
   | { type: "agent.run.resume"; threadId: string }
   | { type: "agent.run.stop"; threadId: string }
   | { type: "agent.policy.update"; threadId: string; policy: AgentPolicy }
-  | { type: "agent.model.update"; threadId: string; model: string; reasoningEffort: "low" | "medium" | "high" }
+  | {
+      type: "agent.model.update";
+      threadId: string;
+      model: string;
+      reasoningEffort: "low" | "medium" | "high";
+    }
   | { type: "agent.approval.respond"; threadId: string; approvalId: string; approved: boolean };
 
 export type AgentCommandResult =
@@ -173,7 +178,14 @@ export type BrowserPageContext = {
   text: string;
   headings: string[];
   elements: BrowserPageElement[];
-  scroll: { x: number; y: number; width: number; height: number; viewportWidth: number; viewportHeight: number };
+  scroll: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    viewportWidth: number;
+    viewportHeight: number;
+  };
   sensitiveRects: Array<{ x: number; y: number; width: number; height: number }>;
   captchaWidgets: Array<{
     kind: "recaptcha" | "hcaptcha" | "captcha";
@@ -185,8 +197,22 @@ export type BrowserPageContext = {
 export type BrowserPageRequest =
   | { requestId: string; type: "context" }
   | { requestId: string; type: "click"; snapshotId: string; ref?: string; x?: number; y?: number }
-  | { requestId: string; type: "type"; snapshotId: string; ref: string; text: string; replace: boolean }
-  | { requestId: string; type: "select"; snapshotId: string; ref: string; value?: string; label?: string }
+  | {
+      requestId: string;
+      type: "type";
+      snapshotId: string;
+      ref: string;
+      text: string;
+      replace: boolean;
+    }
+  | {
+      requestId: string;
+      type: "select";
+      snapshotId: string;
+      ref: string;
+      value?: string;
+      label?: string;
+    }
   | { requestId: string; type: "press"; snapshotId: string; ref?: string; key: string }
   | { requestId: string; type: "scroll"; snapshotId: string; ref?: string; x: number; y: number }
   | { requestId: string; type: "submit"; snapshotId: string; ref: string }
@@ -196,10 +222,12 @@ export type BrowserPageResponse = {
   requestId: string;
   ok: boolean;
   context?: BrowserPageContext;
-  result?: Record<string, unknown>;
+  result?: JsonObject;
   error?: string;
 };
 
 export type BrowserPageRequestInput = {
-  [K in BrowserPageRequest["type"]]: Omit<Extract<BrowserPageRequest, { type: K }>, "requestId">
+  [K in BrowserPageRequest["type"]]: Omit<Extract<BrowserPageRequest, { type: K }>, "requestId">;
 }[BrowserPageRequest["type"]];
+
+import type { JsonObject } from "./json";
