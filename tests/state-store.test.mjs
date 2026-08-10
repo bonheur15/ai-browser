@@ -13,8 +13,14 @@ test("seeds two persistent Spaces and a Personal tab", async () => {
     await store.load();
     const state = store.getState();
 
-    assert.deepEqual(state.spaces.map((space) => space.name), ["Personal", "Work"]);
-    assert.equal(state.spaces.every((space) => space.kind === "persistent"), true);
+    assert.deepEqual(
+      state.spaces.map((space) => space.name),
+      ["Personal", "Work"],
+    );
+    assert.equal(
+      state.spaces.every((space) => space.kind === "persistent"),
+      true,
+    );
     assert.equal(state.tabs.length, 1);
     assert.equal(state.tabs[0].spaceId, "personal");
   } finally {
@@ -40,8 +46,14 @@ test("private Space state is filtered out of persisted state", async () => {
     await store.flush();
 
     const persisted = JSON.parse(await readFile(path.join(directory, "app-state.json"), "utf8"));
-    assert.equal(persisted.spaces.some((space) => space.kind === "private"), false);
-    assert.equal(persisted.tabs.some((tab) => tab.id === "private-tab"), false);
+    assert.equal(
+      persisted.spaces.some((space) => space.kind === "private"),
+      false,
+    );
+    assert.equal(
+      persisted.tabs.some((tab) => tab.id === "private-tab"),
+      false,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
