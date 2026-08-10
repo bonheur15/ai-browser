@@ -1,4 +1,4 @@
-import { ipcMain, type BrowserWindow } from "electron";
+import { ipcMain, type BaseWindow } from "electron";
 import type { AgentCommand } from "../shared/agent-contracts";
 import { isAgentPolicy } from "../ai/agent-policy";
 import { AgentRuntime } from "../ai/agent-runtime";
@@ -17,7 +17,7 @@ const COMMAND_TYPES = new Set([
   "agent.approval.respond",
 ]);
 
-export const registerAgentIPC = (window: BrowserWindow, runtime: AgentRuntime): void => {
+export const registerAgentIPC = (window: BaseWindow, runtime: AgentRuntime): void => {
   ipcMain.handle("agent:get-snapshot", () => runtime.snapshot());
   ipcMain.handle("agent:dispatch", (_event, command: unknown) => {
     if (!isAgentCommand(command)) return { ok: false, error: "Invalid agent command", snapshot: runtime.snapshot() };
