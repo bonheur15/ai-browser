@@ -81,6 +81,24 @@ const sensitiveElements = (): Element[] => [...document.querySelectorAll<Element
   "input[type='password'], input[autocomplete*='password'], input[autocomplete*='cc-'], input[name*='card' i], input[name*='cvv' i], input[name*='cvc' i], input[name*='otp' i], input[name*='code' i]",
 )].filter((element) => visible(element as HTMLElement));
 
+const captchaWidgets = (): BrowserPageContext["captchaWidgets"] => {
+  const candidates = [...document.querySelectorAll<Element>(
+    "iframe, .g-recaptcha, [data-sitekey], [class*='recaptcha' i], [id*='recaptcha' i], [class*='hcaptcha' i], [id*='hcaptcha' i]",
+  )].filter((element) => visible(element as HTMLElement)).sort((a, b) => Number(b.tagName === "IFRAME") - Number(a.tagName === "IFRAME"));
+  const seen = new Set<string>();
+  return candidates.flatMap((element) => {
+    const hint = `${element.getAttribute("src") ?? ""} ${element.getAttribute("title") ?? ""} ${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("class") ?? ""}`.toLowerCase();
+    const kind: BrowserPageContext["captchaWidgets"][number]["kind"] | null = /hcaptcha/.test(hint) ? "hcaptcha" : /recaptcha|google\.com\/recaptcha|recaptcha\.net/.test(hint) ? "recaptcha" : /captcha|data-sitekey/.test(hint) ? "captcha" : null;
+    if (!kind) return [];
+    const rect = rectFor(element);
+    if (rect.width < 20 || rect.height < 20) return [];
+    const key = `${kind}:${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ kind, rect, interaction: "checkbox-or-challenge" as const }];
+  }).slice(0, 8);
+};
+
 const createContext = (): BrowserPageContext => {
   const snapshotId = crypto.randomUUID();
   screenshotContextId = screenshotContextActive ? snapshotId : null;
@@ -113,6 +131,7 @@ const createContext = (): BrowserPageContext => {
       viewportHeight: window.innerHeight,
     },
     sensitiveRects: sensitiveElements().map(rectFor),
+    captchaWidgets: captchaWidgets(),
   };
   pageSnapshot = context;
   return context;
