@@ -1,4 +1,4 @@
-import type { AccentId, AppSettings, AppearanceMode, AppearanceSettings } from "./contracts";
+import type { AccentId, AppearanceMode, AppearanceSettings, AppSettings } from "./contracts";
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = { mode: "dark", accent: "mint" };
 
