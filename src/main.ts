@@ -42,7 +42,10 @@ const createWindow = async (): Promise<void> => {
       sandbox: true,
     },
   });
-  chrome.setBackgroundColor("#0b0e12");
+  // The chrome view sits above the native browser page views. Keep its
+  // backing surface transparent so the active page remains visible through
+  // the viewport while the shell controls still paint their own surfaces.
+  chrome.setBackgroundColor("#00000000");
   window.contentView.addChildView(chrome);
 
   const resizeChrome = (): void => {
