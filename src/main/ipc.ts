@@ -1,4 +1,4 @@
-import { ipcMain, type BrowserWindow } from "electron";
+import { ipcMain, type BaseWindow } from "electron";
 import type { BrowserCommand, BrowserViewportBounds } from "../shared/contracts";
 import { BrowserRuntime } from "./browser-runtime";
 
@@ -31,7 +31,7 @@ const COMMAND_TYPES = new Set([
   "credential.remove",
 ]);
 
-export const registerBrowserIPC = (window: BrowserWindow, runtime: BrowserRuntime): void => {
+export const registerBrowserIPC = (window: BaseWindow, runtime: BrowserRuntime): void => {
   ipcMain.handle("browser:get-snapshot", () => runtime.snapshot());
   ipcMain.handle("browser:dispatch", (_event, command: unknown) => {
     if (!isBrowserCommand(command)) {
