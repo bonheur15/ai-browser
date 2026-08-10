@@ -1,0 +1,241 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to package, such as v0.1.0
+        required: true
+        type: string
+      prerelease:
+        description: Publish as a prerelease
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.resolve.outputs.release_created }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - name: Update the release pull request
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: release_please
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release request
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_PLEASE_CREATED: ${{ steps.release_please.outputs.release_created }}
+          RELEASE_PLEASE_TAG: ${{ steps.release_please.outputs.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          release_created=false
+          tag=""
+          prerelease=false
+
+          if [[ "$RELEASE_PLEASE_CREATED" == "true" ]]; then
+            release_created=true
+            tag="$RELEASE_PLEASE_TAG"
+          elif [[ "$EVENT_NAME" == "push" && "$REF_TYPE" == "tag" ]]; then
+            release_created=true
+            tag="$REF_NAME"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            release_created=true
+            tag="$INPUT_TAG"
+            prerelease="$INPUT_PRERELEASE"
+          fi
+
+          if [[ "$tag" == *-* ]]; then
+            prerelease=true
+          fi
+
+          if [[ "$release_created" == "true" && ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          {
+            echo "release_created=$release_created"
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        if: steps.resolve.outputs.release_created == 'true'
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
+
+      - name: Validate version, lockfile, and changelog
+        if: steps.resolve.outputs.release_created == 'true'
+        run: npm run release:validate -- "${{ steps.resolve.outputs.tag }}"
+
+      - name: Ensure a draft GitHub Release exists
+        if: steps.resolve.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --verify-tag --generate-notes
+          fi
+
+  verify:
+    name: Verify release source
+    needs: prepare
+    if: needs.prepare.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - run: npm audit --package-lock-only --omit=optional --audit-level=high
+
+  package:
+    name: Package ${{ matrix.platform }} x64
+    needs: [prepare, verify]
+    if: needs.prepare.outputs.release_created == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            command: dist:linux
+            paths: |
+              release/*.AppImage
+              release/*.deb
+          - platform: windows
+            os: windows-latest
+            command: dist:win
+            paths: release/*.exe
+          - platform: macos
+            os: macos-latest
+            command: dist:mac
+            paths: |
+              release/*.dmg
+              release/*.zip
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build Linux or Windows packages
+        if: matrix.platform != 'macos'
+        run: npm run ${{ matrix.command }} -- --x64
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - name: Build macOS packages
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          args=(--x64)
+          if [[ -n "$CSC_LINK" && -n "$APPLE_API_KEY_BASE64" && -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" ]]; then
+            apple_api_key="$RUNNER_TEMP/AuthKey.p8"
+            printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$apple_api_key"
+            export APPLE_API_KEY="$apple_api_key"
+            args+=(--config.mac.notarize=true)
+          fi
+          npm run dist:mac -- "${args[@]}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}-x64
+          path: ${{ matrix.paths }}
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: [prepare, package]
+    if: needs.prepare.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*-x64
+          path: artifacts
+          merge-multiple: true
+      - name: Generate SBOM and checksums
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          version="${TAG#v}"
+          npm sbom --package-lock-only --omit=dev --sbom-format=spdx --sbom-type=application > "artifacts/AI-Browser-${version}.spdx.json"
+          (
+            cd artifacts
+            find . -maxdepth 1 -type f ! -name '*SHA256SUMS*' -print0 | sort -z | xargs -0 sha256sum
+          ) > "artifacts/AI-Browser-${TAG}-SHA256SUMS.txt"
+      - name: Attest release provenance
+        uses: actions/attest@v4
+        with:
+          subject-checksums: artifacts/AI-Browser-${{ needs.prepare.outputs.tag }}-SHA256SUMS.txt
+      - name: Upload assets and publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          mapfile -d '' files < <(find artifacts -maxdepth 1 -type f -print0)
+          gh release upload "$TAG" "${files[@]}" --clobber
+          gh release edit "$TAG" --draft=false --prerelease="$PRERELEASE"
