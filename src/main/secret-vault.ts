@@ -78,6 +78,13 @@ export class SecretVault {
     await this.flush();
   }
 
+  async removeForSpace(spaceId: string): Promise<void> {
+    for (const [id, credential] of this.credentials) {
+      if (credential.spaceId === spaceId) this.credentials.delete(id);
+    }
+    await this.flush();
+  }
+
   async flush(): Promise<void> {
     if (!this.available) return;
     const document: VaultDocument = {
