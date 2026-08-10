@@ -112,6 +112,12 @@ export class AgentRuntime {
       return { ok: true, snapshot: this.snapshot() };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "The agent command failed";
+      if ("threadId" in command && typeof command.threadId === "string") {
+        const thread = this.state.getThread(command.threadId);
+        if (thread && ["starting", "running", "waiting-for-approval"].includes(thread.status)) {
+          this.state.updateThread(command.threadId, { status: "error" });
+        }
+      }
       this.emit({ type: "agent.error", threadId: "threadId" in command ? command.threadId : undefined, message });
       return { ok: false, error: message, snapshot: this.snapshot() };
     }
@@ -140,7 +146,7 @@ export class AgentRuntime {
         const browserState = this.browser.snapshot();
         const activeSpace = browserState.spaces.find((space) => space.id === browserState.activeSpaceId);
         const thread = this.state.createThread({ title: command.title, ephemeral: activeSpace?.kind === "private" });
-        void this.ensureConnection().catch(() => undefined);
+        await this.ensureConnection();
         await this.ensureRemoteThread(thread.id);
         return;
       }
