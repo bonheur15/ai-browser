@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const { AgentStateStore, defaultAgentPolicy } = await import("../dist-electron/ai/agent-state-store.js");
+const { AgentStateStore, defaultAgentPolicy } = await import(
+  "../dist-electron/ai/agent-state-store.js"
+);
 const { AgentPolicyEngine } = await import("../dist-electron/ai/agent-policy.js");
 
 const space = (id, kind = "persistent") => ({
@@ -66,12 +68,23 @@ test("private agent threads are available in memory but never written to disk", 
     const store = new AgentStateStore(statePath);
     await store.load();
     const thread = store.createThread({ title: "Private task", ephemeral: true });
-    store.appendMessage({ threadId: thread.id, role: "user", kind: "text", text: "Use this private tab" });
+    store.appendMessage({
+      threadId: thread.id,
+      role: "user",
+      kind: "text",
+      text: "Use this private tab",
+    });
     await store.flush();
 
     const persisted = JSON.parse(await readFile(statePath, "utf8"));
-    assert.equal(persisted.threads.some((candidate) => candidate.id === thread.id), false);
-    assert.equal(persisted.messages.some((candidate) => candidate.threadId === thread.id), false);
+    assert.equal(
+      persisted.threads.some((candidate) => candidate.id === thread.id),
+      false,
+    );
+    assert.equal(
+      persisted.messages.some((candidate) => candidate.threadId === thread.id),
+      false,
+    );
     assert.equal(store.getThread(thread.id).ephemeral, true);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -82,15 +95,34 @@ test("policy engine enforces modes, Spaces, origins, and approvals", () => {
   const personal = space("personal");
   const privateSpace = space("private", "private");
   const personalTab = tab("personal-tab", personal.id);
-  const engine = new AgentPolicyEngine(() => ({ spaces: [personal, privateSpace], tabs: [personalTab] }));
+  const engine = new AgentPolicyEngine(() => ({
+    spaces: [personal, privateSpace],
+    tabs: [personalTab],
+  }));
   const full = defaultAgentPolicy();
 
   assert.deepEqual(engine.decide(full, "navigate", { tab: personalTab }), { allowed: true });
   assert.equal(engine.decide(full, "navigate", { space: privateSpace }).allowed, false);
-  assert.equal(engine.decide({ ...full, allowPrivate: true }, "navigate", { space: privateSpace }).allowed, true);
-  assert.equal(engine.decide({ ...full, mode: "observe" }, "navigate", { tab: personalTab }).allowed, false);
-  assert.equal(engine.decide({ ...full, allowedOrigins: ["https://docs.example.com"] }, "navigate", { url: "https://docs.example.com/file" }).allowed, true);
-  assert.equal(engine.decide({ ...full, allowedOrigins: ["https://docs.example.com"] }, "navigate", { url: "https://mail.example.com/" }).allowed, false);
+  assert.equal(
+    engine.decide({ ...full, allowPrivate: true }, "navigate", { space: privateSpace }).allowed,
+    true,
+  );
+  assert.equal(
+    engine.decide({ ...full, mode: "observe" }, "navigate", { tab: personalTab }).allowed,
+    false,
+  );
+  assert.equal(
+    engine.decide({ ...full, allowedOrigins: ["https://docs.example.com"] }, "navigate", {
+      url: "https://docs.example.com/file",
+    }).allowed,
+    true,
+  );
+  assert.equal(
+    engine.decide({ ...full, allowedOrigins: ["https://docs.example.com"] }, "navigate", {
+      url: "https://mail.example.com/",
+    }).allowed,
+    false,
+  );
   assert.equal(engine.originAllowed(["*.example.com"], "https://mail.example.com/"), true);
   assert.equal(engine.originAllowed(["*.example.com"], "https://example.com.evil.test/"), false);
   assert.equal(engine.requiresApproval({ ...full, mode: "guided" }, "form-submit"), true);
