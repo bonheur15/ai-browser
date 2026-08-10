@@ -157,6 +157,7 @@ export type BrowserAPI = {
   dispatch: (command: BrowserCommand) => Promise<CommandResult>;
   subscribe: (listener: (event: BrowserEvent) => void) => () => void;
   setBrowserViewport: (bounds: BrowserViewportBounds) => void;
+  setChromeOverlayActive: (active: boolean) => void;
 };
 
 export type StoredCredential = CredentialSummary & {
