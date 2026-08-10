@@ -1,0 +1,54 @@
+appId: com.bonheur.aibrowser
+productName: AI Browser
+copyright: Copyright (c) 2026 bonheur15
+
+directories:
+  output: release
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+asar: true
+compression: maximum
+npmRebuild: false
+removePackageScripts: true
+artifactName: AI-Browser-${version}-${os}-${arch}.${ext}
+
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  icon: build/icon.png
+  target:
+    - dmg
+    - zip
+
+dmg:
+  backgroundColor: "#0b0e12"
+
+win:
+  icon: build/icon.png
+  target:
+    - nsis
+    - portable
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+
+linux:
+  category: Network
+  executableName: ai-browser
+  icon: build/icon.png
+  syncDesktopName: true
+  synopsis: Local-first browser with isolated Spaces
+  target:
+    - AppImage
+    - deb
+
+publish: null
