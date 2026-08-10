@@ -21,7 +21,9 @@ export class SecretVault {
   constructor(private readonly filePath: string) {
     const backend = process.platform === "linux" ? safeStorage.getSelectedStorageBackend() : null;
     this.available = safeStorage.isEncryptionAvailable() && backend !== "basic_text";
-    console.log(`[vault] secure storage ${this.available ? "available" : "unavailable"}${backend ? ` (${backend})` : ""}`);
+    console.log(
+      `[vault] secure storage ${this.available ? "available" : "unavailable"}${backend ? ` (${backend})` : ""}`,
+    );
   }
 
   async load(): Promise<void> {
@@ -74,7 +76,8 @@ export class SecretVault {
 
   async removeForOrigin(spaceId: string, origin: string): Promise<void> {
     for (const [id, credential] of this.credentials) {
-      if (credential.spaceId === spaceId && credential.origin === origin) this.credentials.delete(id);
+      if (credential.spaceId === spaceId && credential.origin === origin)
+        this.credentials.delete(id);
     }
     await this.flush();
   }
@@ -94,19 +97,29 @@ export class SecretVault {
     };
     const encrypted = safeStorage.encryptString(JSON.stringify(document));
     const temporaryPath = `${this.filePath}.tmp`;
-    this.writeChain = this.writeChain.then(async () => {
-      await mkdir(path.dirname(this.filePath), { recursive: true });
-      await writeFile(temporaryPath, encrypted.toString("base64"), "utf8");
-      await rename(temporaryPath, this.filePath);
-    }).catch((error: unknown) => {
-      console.error("[vault] unable to persist encrypted credentials", error);
-    });
+    this.writeChain = this.writeChain
+      .then(async () => {
+        await mkdir(path.dirname(this.filePath), { recursive: true });
+        await writeFile(temporaryPath, encrypted.toString("base64"), "utf8");
+        await rename(temporaryPath, this.filePath);
+      })
+      .catch((error: unknown) => {
+        console.error("[vault] unable to persist encrypted credentials", error);
+      });
     await this.writeChain;
   }
 }
 
 const isCredential = (value: unknown): value is StoredCredential => {
   if (!isObject(value)) return false;
-  return ["id", "spaceId", "origin", "hostname", "username", "password", "createdAt", "updatedAt"]
-    .every((key) => typeof value[key] === "string");
+  return [
+    "id",
+    "spaceId",
+    "origin",
+    "hostname",
+    "username",
+    "password",
+    "createdAt",
+    "updatedAt",
+  ].every((key) => typeof value[key] === "string");
 };
