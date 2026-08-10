@@ -1,0 +1,68 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true,
+    "defaultBranch": "main"
+  },
+  "files": {
+    "includes": [
+      "src/**/*.{ts,tsx,mts,css,html}",
+      "tests/**/*.mjs",
+      "vite.config.mts",
+      "package.json",
+      "tsconfig*.json",
+      "!src/renderer/dist"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "formatWithErrors": false,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineEnding": "lf",
+    "lineWidth": 100
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noImplicitAnyLet": "error"
+      },
+      "style": {
+        "noNonNullAssertion": "error",
+        "useThrowOnlyError": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/renderer/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "a11y": "off",
+          "correctness": { "useExhaustiveDependencies": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/renderer/**/*.css"],
+      "linter": {
+        "rules": {
+          "complexity": { "noImportantStyles": "off" },
+          "style": { "noDescendingSpecificity": "off" }
+        }
+      }
+    }
+  ]
+}
