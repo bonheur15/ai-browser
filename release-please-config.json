@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "c4cac04f25742ae4d931798ced5e29eaf8e1c9b0",
+  "release-type": "node",
+  "include-v-in-tag": true,
+  "draft": true,
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "refactor", "section": "Refactoring" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "build", "section": "Build System" },
+    { "type": "ci", "section": "Continuous Integration" },
+    { "type": "chore", "section": "Maintenance", "hidden": true }
+  ],
+  "packages": {
+    ".": {
+      "package-name": "ai-browser",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}
