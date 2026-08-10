@@ -1,4 +1,4 @@
-import { session, type Session } from "electron";
+import { type Session, session } from "electron";
 import type { Space } from "../shared/contracts";
 
 const CLEAR_DATA_TYPES = [
@@ -28,7 +28,10 @@ export class SpaceSessionManager {
     return current;
   }
 
-  async inspectOrigin(space: Space, origin: string): Promise<{ cookieCount: number; storagePresent: boolean }> {
+  async inspectOrigin(
+    space: Space,
+    origin: string,
+  ): Promise<{ cookieCount: number; storagePresent: boolean }> {
     const current = this.get(space);
     try {
       const cookies = await current.cookies.get({ url: origin });
