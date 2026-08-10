@@ -21,6 +21,7 @@ export class SecretVault {
   constructor(private readonly filePath: string) {
     const backend = process.platform === "linux" ? safeStorage.getSelectedStorageBackend() : null;
     this.available = safeStorage.isEncryptionAvailable() && backend !== "basic_text";
+    console.log(`[vault] secure storage ${this.available ? "available" : "unavailable"}${backend ? ` (${backend})` : ""}`);
   }
 
   async load(): Promise<void> {
