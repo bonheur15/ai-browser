@@ -43,7 +43,12 @@ export class AgentEvidenceStore {
     }
   }
 
-  async save(input: { threadId: string; title: string; url: string; dataUrl: string }): Promise<StoredEvidence | null> {
+  async save(input: {
+    threadId: string;
+    title: string;
+    url: string;
+    dataUrl: string;
+  }): Promise<StoredEvidence | null> {
     try {
       const image = nativeImage.createFromDataURL(input.dataUrl);
       if (image.isEmpty()) return null;
@@ -75,7 +80,10 @@ export class AgentEvidenceStore {
     if (!record) return null;
     try {
       const data = await readFile(path.join(this.directory, record.fileName));
-      return { record: structuredClone(record), dataUrl: `data:image/png;base64,${data.toString("base64")}` };
+      return {
+        record: structuredClone(record),
+        dataUrl: `data:image/png;base64,${data.toString("base64")}`,
+      };
     } catch {
       this.records.delete(id);
       await this.writeIndex();
@@ -110,18 +118,22 @@ export class AgentEvidenceStore {
     const document: EvidenceDocument = { version: 1, records: [...this.records.values()] };
     const indexPath = path.join(this.directory, "index.json");
     const temporaryPath = `${indexPath}.tmp`;
-    this.writeChain = this.writeChain.then(async () => {
-      await mkdir(this.directory, { recursive: true });
-      await writeFile(temporaryPath, JSON.stringify(document, null, 2), "utf8");
-      await rename(temporaryPath, indexPath);
-    }).catch((error: unknown) => {
-      console.error("[agent-evidence] unable to persist evidence index", error);
-    });
+    this.writeChain = this.writeChain
+      .then(async () => {
+        await mkdir(this.directory, { recursive: true });
+        await writeFile(temporaryPath, JSON.stringify(document, null, 2), "utf8");
+        await rename(temporaryPath, indexPath);
+      })
+      .catch((error: unknown) => {
+        console.error("[agent-evidence] unable to persist evidence index", error);
+      });
     await this.writeChain;
   }
 }
 
 const isEvidenceRecord = (value: unknown): value is StoredEvidence => {
   if (!isObject(value)) return false;
-  return ["id", "threadId", "title", "url", "createdAt", "fileName"].every((key) => typeof value[key] === "string");
+  return ["id", "threadId", "title", "url", "createdAt", "fileName"].every(
+    (key) => typeof value[key] === "string",
+  );
 };
