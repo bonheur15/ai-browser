@@ -1,6 +1,6 @@
-import { ipcMain, type BaseWindow } from "electron";
+import { type BaseWindow, ipcMain } from "electron";
 import type { BrowserCommand, BrowserViewportBounds } from "../shared/contracts";
-import { BrowserRuntime } from "./browser-runtime";
+import type { BrowserRuntime } from "./browser-runtime";
 
 const COMMAND_TYPES = new Set([
   "space.create",
