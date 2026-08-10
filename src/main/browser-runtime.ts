@@ -33,6 +33,7 @@ import {
 import type { SecretVault } from "./secret-vault";
 import type { SpaceSessionManager } from "./space-session-manager";
 import type { AppStateStore } from "./state-store";
+import { DEFAULT_APPEARANCE, isAppearanceSettings } from "../shared/settings";
 
 type LoginCandidate = {
   origin: string;
@@ -603,6 +604,17 @@ export class BrowserRuntime {
         return;
       case "credential.remove":
         await this.removeCredential(command.credentialId);
+        return;
+      case "settings.updateAppearance":
+        if (!isAppearanceSettings(command.appearance)) throw new Error("Invalid appearance settings");
+        this.state.update((current) => {
+          current.settings.appearance = { ...command.appearance };
+        });
+        return;
+      case "settings.resetAppearance":
+        this.state.update((current) => {
+          current.settings.appearance = { ...DEFAULT_APPEARANCE };
+        });
         return;
     }
   }
