@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { BrowserAPI, BrowserCommand, BrowserEvent, BrowserViewportBounds } from "./shared/contracts";
+import type { AgentAPI, AgentCommand, AgentEvent } from "./shared/agent-contracts";
 
 contextBridge.exposeInMainWorld("windowControls", {
   minimize: (): void => ipcRenderer.send("window:minimize"),
@@ -20,3 +21,16 @@ const browserAPI: BrowserAPI = {
 };
 
 contextBridge.exposeInMainWorld("browserAPI", browserAPI);
+
+const agentAPI: AgentAPI = {
+  getSnapshot: () => ipcRenderer.invoke("agent:get-snapshot"),
+  dispatch: (command: AgentCommand) => ipcRenderer.invoke("agent:dispatch", command),
+  getEvidence: (id: string) => ipcRenderer.invoke("agent:get-evidence", id),
+  subscribe: (listener: (event: AgentEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, event: AgentEvent): void => listener(event);
+    ipcRenderer.on("agent:event", handler);
+    return () => ipcRenderer.removeListener("agent:event", handler);
+  },
+};
+
+contextBridge.exposeInMainWorld("agentAPI", agentAPI);
