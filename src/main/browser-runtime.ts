@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { BrowserWindow, shell, WebContentsView, type WebContents } from "electron";
+import { app, BrowserWindow, shell, WebContentsView, type WebContents } from "electron";
 import type {
   AppSnapshot,
   BrowserCommand,
   BrowserEvent,
+  BrowserRuntimeStatus,
+  BrowserSecurityStatus,
   BrowserViewportBounds,
   CommandResult,
   CredentialSaveRequest,
@@ -92,14 +94,35 @@ const navigationUrl = (input: string): string => {
   return `${GOOGLE_SEARCH}${encodeURIComponent(trimmed)}`;
 };
 
+export const classifyBrowserSecurity = (url: string, certificateError = false): { security: BrowserSecurityStatus; securityMessage: string } => {
+  if (certificateError) return { security: "not-secure", securityMessage: "The page certificate could not be verified" };
+  try {
+    const protocol = new URL(url).protocol;
+    if (protocol === "https:") return { security: "secure", securityMessage: "Encrypted HTTPS connection" };
+    if (protocol === "http:") return { security: "not-secure", securityMessage: "This page is using an unencrypted HTTP connection" };
+  } catch {
+    // Invalid and renderer-generated URLs are special browser pages.
+  }
+  return { security: "special", securityMessage: "This is a browser-generated or special page" };
+};
+
+export const aggregateMemoryUsageMb = (metrics: Array<{ memory?: { workingSetSize?: number } }>): number | null => {
+  const values = metrics.map((metric) => metric.memory?.workingSetSize).filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+  if (values.length === 0) return null;
+  return Math.round((values.reduce((total, value) => total + value, 0) / 1024) * 10) / 10;
+};
+
 export class BrowserRuntime {
   private readonly views = new Map<string, WebContentsView>();
   private readonly pendingCandidates = new Map<string, PendingCandidate>();
   private readonly pendingPageRequests = new Map<string, { senderId: number; resolve: (response: BrowserPageResponse) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   private readonly screenshotContexts = new Map<string, ScreenshotContext>();
   private readonly pendingFillResults = new Map<string, { senderId: number; resolve: (ok: boolean) => void; timer: NodeJS.Timeout }>();
+  private readonly agentLocks = new Map<string, { threadId: string }>();
+  private readonly certificateErrors = new Set<string>();
   private attachedTabId: string | null = null;
   private viewport: BrowserViewportBounds = { x: 92, y: 154, width: 1120, height: 600 };
+  private runtimeStatusTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly window: BrowserWindow,
@@ -122,10 +145,69 @@ export class BrowserRuntime {
       this.attachTab(snapshot.activeTabId);
     }
     this.publish();
+    this.publishRuntimeStatus();
+    this.runtimeStatusTimer = setInterval(() => this.publishRuntimeStatus(), 2_000);
+  }
+
+  dispose(): void {
+    if (this.runtimeStatusTimer) clearInterval(this.runtimeStatusTimer);
+    this.runtimeStatusTimer = null;
+  }
+
+  private currentRuntimeStatus(): BrowserRuntimeStatus {
+    const snapshot = this.state.getState();
+    const tab = snapshot.tabs.find((candidate) => candidate.id === this.attachedTabId);
+    const security = classifyBrowserSecurity(tab?.url ?? "about:blank", tab ? this.certificateErrors.has(tab.id) : false);
+    let memoryUsageMb: number | null = null;
+    try {
+      memoryUsageMb = aggregateMemoryUsageMb(app.getAppMetrics());
+    } catch {
+      memoryUsageMb = null;
+    }
+    return {
+      activeTabId: tab?.id ?? null,
+      memoryUsageMb,
+      ...security,
+      loading: tab?.status === "loading",
+      sampledAt: new Date().toISOString(),
+    };
+  }
+
+  private publishRuntimeStatus(): void {
+    this.emit({ type: "runtime-status", status: this.currentRuntimeStatus() });
   }
 
   snapshot(): AppSnapshot {
-    return this.state.snapshot(this.vault.summaries(), this.vault.available);
+    const snapshot = this.state.snapshot(this.vault.summaries(), this.vault.available);
+    return { ...snapshot, tabs: snapshot.tabs.map((tab) => ({ ...tab, agentLock: this.agentLocks.get(tab.id) })) };
+  }
+
+  setAgentTabLock(tabId: string, threadId: string, locked: boolean): void {
+    if (locked) {
+      this.agentLocks.set(tabId, { threadId });
+      void this.setViewInteractionLocked(tabId, true);
+    } else {
+      this.agentLocks.delete(tabId);
+      void this.setViewInteractionLocked(tabId, false);
+    }
+    this.publish();
+  }
+
+  private async setViewInteractionLocked(tabId: string, locked: boolean): Promise<void> {
+    const view = this.views.get(tabId);
+    if (!view || view.webContents.isDestroyed()) return;
+    const value = locked ? "none" : "auto";
+    try {
+      await view.webContents.executeJavaScript(`document.documentElement.style.pointerEvents = ${JSON.stringify(value)}; document.body && (document.body.style.pointerEvents = ${JSON.stringify(value)});`, true);
+    } catch {
+      // A page can be between navigations; the next load event reapplies the lock.
+    }
+  }
+
+  releaseAgentTabLocks(threadId: string): void {
+    for (const [tabId, lock] of this.agentLocks) {
+      if (lock.threadId === threadId) this.setAgentTabLock(tabId, threadId, false);
+    }
   }
 
   setViewport(bounds: BrowserViewportBounds): void {
@@ -331,6 +413,8 @@ export class BrowserRuntime {
   }
 
   private async execute(command: BrowserCommand): Promise<void> {
+    const targetTabId = "tabId" in command && typeof command.tabId === "string" ? command.tabId : undefined;
+    if (targetTabId && this.agentLocks.has(targetTabId)) throw new Error("This tab is currently being used by the agent");
     switch (command.type) {
       case "space.create": {
         const space = this.state.addSpace({
@@ -480,6 +564,7 @@ export class BrowserRuntime {
       return { action: "deny" };
     });
     view.webContents.on("did-finish-load", () => {
+      if (this.agentLocks.has(tab.id)) void this.setViewInteractionLocked(tab.id, true);
       console.log(`[browser] loaded ${tab.url === DEFAULT_URL ? "new tab" : view.webContents.getURL()}`);
     });
     view.webContents.on("preload-error", (_event, preloadPath, error) => {
@@ -492,6 +577,12 @@ export class BrowserRuntime {
     });
     view.webContents.on("did-start-loading", () => this.updateTabStatus(tab.id, "loading"));
     view.webContents.on("did-stop-loading", () => this.updateTabStatus(tab.id, "loaded"));
+    view.webContents.on("certificate-error", (_event, url) => {
+      if (url === view.webContents.getURL() || url === tab.url) {
+        this.certificateErrors.add(tab.id);
+        this.publishRuntimeStatus();
+      }
+    });
     view.webContents.on("page-title-updated", (event, title) => {
       event.preventDefault();
       this.state.updateTab(tab.id, { title: title || hostnameFor(tab.url) });
@@ -502,13 +593,18 @@ export class BrowserRuntime {
       this.publish();
     });
     view.webContents.on("did-navigate", (_event, url) => {
+      this.certificateErrors.delete(tab.id);
       void this.handleNavigation(tab.id, url);
     });
     view.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
-      if (isMainFrame) void this.handleNavigation(tab.id, url);
+      if (isMainFrame) {
+        this.certificateErrors.delete(tab.id);
+        void this.handleNavigation(tab.id, url);
+      }
     });
     view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (isMainFrame && errorCode !== -3) {
+        this.publishRuntimeStatus();
         this.emit({ type: "toast", tone: "error", message: `Unable to load ${hostnameFor(validatedURL)}: ${errorDescription}` });
       }
     });
@@ -709,6 +805,7 @@ export class BrowserRuntime {
     if (url === NEW_TAB_URL) {
       this.state.updateTab(tabId, { url: DEFAULT_URL, title: "New tab", status: "loaded", lastActiveAt: new Date().toISOString() });
       this.publish();
+      this.publishRuntimeStatus();
       return;
     }
     const origin = originFor(url);
@@ -721,6 +818,7 @@ export class BrowserRuntime {
         : this.newSite(tab.spaceId, origin, inspected));
     }
     this.publish();
+    this.publishRuntimeStatus();
   }
 
   private updateTabStatus(tabId: string, status: Tab["status"]): void {
@@ -728,6 +826,7 @@ export class BrowserRuntime {
     if (!tab || tab.status === "hibernated") return;
     this.state.updateTab(tabId, { status });
     this.publish();
+    this.publishRuntimeStatus();
   }
 
   private loadTabURL(view: WebContentsView, url: string): Promise<void> {
@@ -755,6 +854,7 @@ export class BrowserRuntime {
         if (previous) this.window.contentView.removeChildView(previous);
       }
       this.attachedTabId = null;
+      this.publishRuntimeStatus();
       return;
     }
     const tab = this.state.getState().tabs.find((candidate) => candidate.id === tabId);
@@ -768,6 +868,7 @@ export class BrowserRuntime {
     this.window.contentView.addChildView(next);
     this.attachedTabId = tabId;
     this.resizeAttachedView();
+    this.publishRuntimeStatus();
   }
 
   private resizeAttachedView(): void {
@@ -782,7 +883,9 @@ export class BrowserRuntime {
     this.window.contentView.removeChildView(view);
     if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false });
     this.views.delete(tabId);
+    this.certificateErrors.delete(tabId);
     if (this.attachedTabId === tabId) this.attachedTabId = null;
+    this.publishRuntimeStatus();
   }
 
   private findTabByWebContents(sender: WebContents): Tab | null {
