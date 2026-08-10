@@ -2,7 +2,15 @@
   "name": "ai-browser",
   "version": "0.1.0",
   "private": true,
-  "description": "A minimal AI browser desktop shell.",
+  "description": "A local-first Electron browser with isolated Spaces and an optional Codex agent.",
+  "author": "bonheur15",
+  "license": "UNLICENSED",
+  "desktopName": "ai-browser.desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bonheur15/ai-browser.git"
+  },
+  "homepage": "https://github.com/bonheur15/ai-browser#readme",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently --kill-others-on-fail \"vite --host 127.0.0.1\" \"npm run dev:electron\"",
@@ -17,11 +25,15 @@
     "check": "biome ci",
     "check:write": "biome check --write",
     "verify": "npm run check && npm run typecheck && npm test && npm run build",
+    "package": "npm run build && electron-builder --dir --publish never",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb --publish never",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
+    "dist:win": "npm run build && electron-builder --win nsis portable --publish never",
+    "release:validate": "node scripts/validate-release.mjs",
     "start": "env -u ELECTRON_RUN_AS_NODE electron ."
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^6.0.5",
-    "electron": "^43.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -30,7 +42,10 @@
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
     "concurrently": "^10.0.4",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
     "wait-on": "^9.1.0"
