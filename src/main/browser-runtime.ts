@@ -865,7 +865,10 @@ export class BrowserRuntime {
       const previous = this.views.get(this.attachedTabId);
       if (previous) this.window.contentView.removeChildView(previous);
     }
-    this.window.contentView.addChildView(next);
+    // Keep native page surfaces beneath the React chrome so floaty overlays
+    // such as the bottom status toolbar can render above the page.
+    this.window.contentView.removeChildView(next);
+    this.window.contentView.addChildView(next, 0);
     this.attachedTabId = tabId;
     this.resizeAttachedView();
     this.publishRuntimeStatus();
