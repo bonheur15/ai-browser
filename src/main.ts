@@ -1,13 +1,13 @@
-import { app, BaseWindow, WebContentsView, ipcMain, nativeTheme } from "electron";
 import path from "node:path";
-import { BrowserRuntime } from "./main/browser-runtime";
-import { registerBrowserIPC } from "./main/ipc";
-import { registerAgentIPC } from "./main/agent-ipc";
+import { app, BaseWindow, ipcMain, nativeTheme, WebContentsView } from "electron";
+import { AgentEvidenceStore } from "./ai/agent-evidence-store";
 import { AgentRuntime } from "./ai/agent-runtime";
 import { AgentStateStore } from "./ai/agent-state-store";
-import { AgentEvidenceStore } from "./ai/agent-evidence-store";
-import { SpaceSessionManager } from "./main/space-session-manager";
+import { registerAgentIPC } from "./main/agent-ipc";
+import { BrowserRuntime } from "./main/browser-runtime";
+import { registerBrowserIPC } from "./main/ipc";
 import { SecretVault } from "./main/secret-vault";
+import { SpaceSessionManager } from "./main/space-session-manager";
 import { AppStateStore } from "./main/state-store";
 
 let mainWindow: BaseWindow | null = null;
@@ -20,6 +20,11 @@ let agentRuntime: AgentRuntime | null = null;
 let isQuitting = false;
 
 const isDevelopment = process.argv.includes("--dev");
+
+const requireInitialized = <T>(value: T | null, name: string): T => {
+  if (!value) throw new Error(`${name} is not initialized`);
+  return value;
+};
 
 const createWindow = async (): Promise<void> => {
   mainWindow = new BaseWindow({
@@ -72,11 +77,15 @@ const createWindow = async (): Promise<void> => {
     }
   });
 
+  const initializedStateStore = requireInitialized(stateStore, "App state store");
+  const initializedSecretVault = requireInitialized(secretVault, "Secret vault");
+  const initializedAgentStateStore = requireInitialized(agentStateStore, "Agent state store");
+  const initializedEvidenceStore = requireInitialized(agentEvidenceStore, "Agent evidence store");
   const runtime = new BrowserRuntime(
     window,
-    stateStore!,
+    initializedStateStore,
     new SpaceSessionManager(),
-    secretVault!,
+    initializedSecretVault,
     (event) => {
       if (!chrome.webContents.isDestroyed()) chrome.webContents.send("browser:event", event);
     },
@@ -85,8 +94,8 @@ const createWindow = async (): Promise<void> => {
   registerBrowserIPC(window, runtime);
   const agents = new AgentRuntime(
     runtime,
-    agentStateStore!,
-    agentEvidenceStore!,
+    initializedAgentStateStore,
+    initializedEvidenceStore,
     (event) => {
       if (!chrome.webContents.isDestroyed()) chrome.webContents.send("agent:event", event);
     },
@@ -119,25 +128,30 @@ ipcMain.on("window:toggle-maximize", () => {
 ipcMain.on("window:close", () => mainWindow?.close());
 ipcMain.handle("window:is-maximized", () => mainWindow?.isMaximized() ?? false);
 
-app.whenReady().then(async () => {
-  nativeTheme.themeSource = "dark";
-  stateStore = new AppStateStore(path.join(app.getPath("userData"), "app-state.json"));
-  secretVault = new SecretVault(path.join(app.getPath("userData"), "vault.enc"));
-  agentStateStore = new AgentStateStore(path.join(app.getPath("userData"), "agent-state.json"));
-  agentEvidenceStore = new AgentEvidenceStore(path.join(app.getPath("userData"), "agent-evidence"));
-  await stateStore.load();
-  await secretVault.load();
-  await agentStateStore.load();
-  await agentEvidenceStore.load();
-  await createWindow();
+app
+  .whenReady()
+  .then(async () => {
+    nativeTheme.themeSource = "dark";
+    stateStore = new AppStateStore(path.join(app.getPath("userData"), "app-state.json"));
+    secretVault = new SecretVault(path.join(app.getPath("userData"), "vault.enc"));
+    agentStateStore = new AgentStateStore(path.join(app.getPath("userData"), "agent-state.json"));
+    agentEvidenceStore = new AgentEvidenceStore(
+      path.join(app.getPath("userData"), "agent-evidence"),
+    );
+    await stateStore.load();
+    await secretVault.load();
+    await agentStateStore.load();
+    await agentEvidenceStore.load();
+    await createWindow();
 
-  app.on("activate", () => {
-    if (BaseWindow.getAllWindows().length === 0) void createWindow();
+    app.on("activate", () => {
+      if (BaseWindow.getAllWindows().length === 0) void createWindow();
+    });
+  })
+  .catch((error: unknown) => {
+    console.error("[app] unable to initialize", error);
+    app.quit();
   });
-}).catch((error: unknown) => {
-  console.error("[app] unable to initialize", error);
-  app.quit();
-});
 
 app.on("before-quit", (event) => {
   if (isQuitting) return;
