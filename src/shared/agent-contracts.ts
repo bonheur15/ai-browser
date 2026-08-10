@@ -193,3 +193,7 @@ export type BrowserPageResponse = {
   result?: Record<string, unknown>;
   error?: string;
 };
+
+export type BrowserPageRequestInput = {
+  [K in BrowserPageRequest["type"]]: Omit<Extract<BrowserPageRequest, { type: K }>, "requestId">
+}[BrowserPageRequest["type"]];
