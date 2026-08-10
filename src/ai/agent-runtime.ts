@@ -137,7 +137,9 @@ export class AgentRuntime {
   private async execute(command: AgentCommand): Promise<void> {
     switch (command.type) {
       case "agent.thread.create": {
-        const thread = this.state.createThread({ title: command.title });
+        const browserState = this.browser.snapshot();
+        const activeSpace = browserState.spaces.find((space) => space.id === browserState.activeSpaceId);
+        const thread = this.state.createThread({ title: command.title, ephemeral: activeSpace?.kind === "private" });
         void this.ensureConnection().catch(() => undefined);
         await this.ensureRemoteThread(thread.id);
         return;
@@ -164,6 +166,8 @@ export class AgentRuntime {
         return;
       case "agent.run.resume":
         this.explicitRunStatus.delete(command.threadId);
+        await this.ensureConnection();
+        await this.ensureRemoteThread(command.threadId);
         await this.sendTurn(command.threadId, [{ type: "text", text: "Continue the browser task from the last completed action." }], true);
         return;
       case "agent.policy.update":
@@ -404,17 +408,36 @@ export class AgentRuntime {
     const policy = normalizePolicy(thread.policy);
     if (command === "/scope") {
       const entries = message.slice(parts[0].length).trim().split(/\s+/).filter(Boolean);
-      for (const entry of entries) {
-        const [key, raw] = entry.split("=", 2);
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index] ?? "";
+        const [key, inlineRaw] = entry.split("=", 2);
+        const raw = inlineRaw ?? (entries[index + 1]?.includes("=") ? undefined : entries[++index]);
         const values = raw?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+        if (!raw) throw new Error("Scope values are required for spaces, tabs, and origins");
         if (key === "spaces") policy.allowedSpaceIds = values;
         else if (key === "tabs") policy.allowedTabIds = values;
         else if (key === "origins") policy.allowedOrigins = values;
         else throw new Error("Scope supports spaces=, tabs=, and origins=");
       }
     } else {
-      const values = message.slice(parts[0].length).trim().split(/[\s,]+/).filter(Boolean) as AgentPolicy["allowedActions"];
-      if (!values.every((value) => ["read", "navigate", "tab-management", "page-interaction", "credential-fill", "form-submit", "external-side-effect", "destructive"].includes(value))) throw new Error("Unknown action in policy command");
+      const aliases: Record<string, AgentPolicy["allowedActions"][number]> = {
+        read: "read",
+        navigate: "navigate",
+        tabs: "tab-management",
+        "tab-management": "tab-management",
+        interact: "page-interaction",
+        "page-interaction": "page-interaction",
+        credential: "credential-fill",
+        "credential-fill": "credential-fill",
+        submit: "form-submit",
+        "form-submit": "form-submit",
+        external: "external-side-effect",
+        "external-side-effect": "external-side-effect",
+        destructive: "destructive",
+      };
+      const rawValues = message.slice(parts[0].length).trim().split(/[\s,]+/).filter(Boolean);
+      const values = rawValues.map((value) => aliases[value.toLowerCase()]).filter((value): value is AgentPolicy["allowedActions"][number] => Boolean(value));
+      if (values.length !== rawValues.length) throw new Error("Unknown action in policy command");
       const set = new Set(policy.allowedActions);
       for (const value of values) command === "/allow" ? set.add(value) : set.delete(value);
       policy.allowedActions = [...set];
