@@ -25,7 +25,7 @@ export const registerAgentIPC = (window: BrowserWindow, runtime: AgentRuntime): 
   });
   ipcMain.handle("agent:get-evidence", (_event, id: unknown) => runtime.getEvidence(typeof id === "string" ? id : ""));
 
-  window.webContents.on("destroyed", () => {
+  window.on("closed", () => {
     ipcMain.removeHandler("agent:get-snapshot");
     ipcMain.removeHandler("agent:dispatch");
     ipcMain.removeHandler("agent:get-evidence");
