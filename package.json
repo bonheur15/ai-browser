@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "A local-first Electron browser with isolated Spaces and an optional Codex agent.",
-  "author": "bonheur15",
+  "author": {
+    "name": "Rumanzi Bonheur",
+    "email": "bonheur@hubfly.space",
+    "url": "https://github.com/bonheur15"
+  },
   "license": "UNLICENSED",
   "desktopName": "ai-browser.desktop",
   "repository": {
@@ -30,6 +34,7 @@
     "dist:linux": "npm run build && electron-builder --linux AppImage deb --publish never",
     "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "dist:win": "npm run build && electron-builder --win nsis portable --publish never",
+    "smoke:package:linux": "scripts/smoke-packaged-linux.sh",
     "release:validate": "node scripts/validate-release.mjs",
     "start": "env -u ELECTRON_RUN_AS_NODE electron ."
   },
