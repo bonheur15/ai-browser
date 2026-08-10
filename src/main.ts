@@ -126,6 +126,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   isQuitting = true;
   const shutdownAgent = agentRuntime?.shutdown() ?? Promise.resolve();
+  browserRuntime?.dispose();
   const flushBrowser = browserRuntime?.flush() ?? Promise.resolve();
   void Promise.all([shutdownAgent, flushBrowser]).finally(() => app.quit());
 });
