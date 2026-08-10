@@ -36,9 +36,12 @@ const createWindow = async (): Promise<void> => {
     frame: false,
     titleBarStyle: "hidden",
     backgroundColor: "#0b0e12",
+    transparent: false,
   });
 
   const window = mainWindow;
+  window.setBackgroundColor("#0b0e12");
+  window.contentView.setBackgroundColor("#0b0e12");
   const chrome = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
