@@ -404,6 +404,11 @@ input:focus-visible {
 .agent-space-toggles button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border: 1px solid transparent; border-radius: 6px; color: #89989e; background: rgba(255, 255, 255, 0.035); font-size: 8px; cursor: pointer; }
 .agent-space-toggles button.is-selected { color: #d6eee0; border-color: rgba(155, 231, 196, 0.22); background: rgba(155, 231, 196, 0.1); }
 .agent-space-toggles i { width: 6px; height: 6px; border-radius: 50%; background: var(--space-color); }
+.agent-tab-toggles { max-height: 112px; overflow: auto; }
+.agent-tab-toggles button { display: grid; justify-items: start; gap: 2px; max-width: 100%; text-align: left; }
+.agent-tab-toggles button span { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-tab-toggles button small { color: #71827e; font-size: 7px; }
+.agent-action-toggles button { padding: 5px 6px; }
 .agent-origin-form { display: flex; gap: 5px; }
 .agent-origin-form input { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid rgba(164, 184, 199, 0.12); border-radius: 7px; outline: 0; color: #d4e0e1; background: #13191f; font-size: 9px; }
 .agent-origin-form button { padding: 0 8px; border: 1px solid rgba(155, 231, 196, 0.18); border-radius: 7px; color: #a6d8b9; background: rgba(155, 231, 196, 0.07); font-size: 9px; cursor: pointer; }
