@@ -1,5 +1,7 @@
 export {};
 
+import type { BrowserAPI } from "../shared/contracts";
+
 declare global {
   interface Window {
     windowControls: {
@@ -8,5 +10,6 @@ declare global {
       close: () => void;
       isMaximized: () => Promise<boolean>;
     };
+    browserAPI: BrowserAPI;
   }
 }
