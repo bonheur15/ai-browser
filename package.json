@@ -6,7 +6,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently --kill-others-on-fail \"vite --host 127.0.0.1\" \"npm run dev:electron\"",
-    "dev:electron": "npm run build:electron && wait-on http://127.0.0.1:5173 && env -u ELECTRON_RUN_AS_NODE NODE_ENV=development electron .",
+    "dev:electron": "npm run build:electron && wait-on http://127.0.0.1:5173 && env -u ELECTRON_RUN_AS_NODE electron . --dev",
     "build": "npm run build:electron && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
