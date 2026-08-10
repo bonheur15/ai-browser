@@ -7,7 +7,6 @@ import type {
   AgentPersistedState,
   AgentPersistedThread,
   AgentPolicy,
-  AgentThread,
 } from "../shared/agent-contracts";
 
 const now = (): string => new Date().toISOString();
@@ -104,9 +103,12 @@ const isAction = (value: unknown): value is AgentActionTrace => {
 const validState = (value: unknown): value is AgentPersistedState => {
   if (!isObject(value) || value.version !== 1 || !isPolicy(value.globalDefaults)) return false;
   return (
-    Array.isArray(value.threads) && value.threads.every(isThread) &&
-    Array.isArray(value.messages) && value.messages.every(isMessage) &&
-    Array.isArray(value.actions) && value.actions.every(isAction) &&
+    Array.isArray(value.threads) &&
+    value.threads.every(isThread) &&
+    Array.isArray(value.messages) &&
+    value.messages.every(isMessage) &&
+    Array.isArray(value.actions) &&
+    value.actions.every(isAction) &&
     (value.activeThreadId === null || typeof value.activeThreadId === "string")
   );
 };
@@ -134,16 +136,22 @@ export class AgentStateStore {
           threads: parsed.threads.map((thread) => ({
             ...thread,
             policy: normalizePolicy(thread.policy),
-            status: ["running", "starting", "waiting-for-approval"].includes(thread.status) ? "paused" : thread.status,
+            status: ["running", "starting", "waiting-for-approval"].includes(thread.status)
+              ? "paused"
+              : thread.status,
           })),
         };
-        if (this.state.activeThreadId && !this.state.threads.some((thread) => thread.id === this.state.activeThreadId)) {
+        if (
+          this.state.activeThreadId &&
+          !this.state.threads.some((thread) => thread.id === this.state.activeThreadId)
+        ) {
           this.state.activeThreadId = this.state.threads[0]?.id ?? null;
         }
       }
     } catch (error: unknown) {
       const code = isObject(error) && "code" in error ? error.code : undefined;
-      if (code !== "ENOENT") console.error("[agent-state] unable to read agent state; using a fresh state", error);
+      if (code !== "ENOENT")
+        console.error("[agent-state] unable to read agent state; using a fresh state", error);
     }
   }
 
@@ -168,7 +176,11 @@ export class AgentStateStore {
     return structuredClone(this.state.actions.filter((action) => action.threadId === threadId));
   }
 
-  createThread(input?: { title?: string; model?: string; ephemeral?: boolean }): AgentPersistedThread {
+  createThread(input?: {
+    title?: string;
+    model?: string;
+    ephemeral?: boolean;
+  }): AgentPersistedThread {
     const timestamp = now();
     const thread: AgentPersistedThread = {
       id: randomUUID(),
@@ -208,13 +220,17 @@ export class AgentStateStore {
     this.state.threads = this.state.threads.filter((thread) => thread.id !== threadId);
     this.state.messages = this.state.messages.filter((message) => message.threadId !== threadId);
     this.state.actions = this.state.actions.filter((action) => action.threadId !== threadId);
-    if (this.state.activeThreadId === threadId) this.state.activeThreadId = this.state.threads[0]?.id ?? null;
+    if (this.state.activeThreadId === threadId)
+      this.state.activeThreadId = this.state.threads[0]?.id ?? null;
     if (before === this.state.threads.length) return false;
     this.scheduleWrite();
     return true;
   }
 
-  appendMessage(message: Omit<AgentMessage, "id" | "createdAt"> & Partial<Pick<AgentMessage, "id" | "createdAt">>): AgentMessage {
+  appendMessage(
+    message: Omit<AgentMessage, "id" | "createdAt"> &
+      Partial<Pick<AgentMessage, "id" | "createdAt">>,
+  ): AgentMessage {
     const created: AgentMessage = {
       ...message,
       id: message.id ?? randomUUID(),
@@ -280,7 +296,9 @@ export class AgentStateStore {
 
   private async writeNow(): Promise<void> {
     const state = this.getState();
-    const ephemeralThreadIds = new Set(state.threads.filter((thread) => thread.ephemeral).map((thread) => thread.id));
+    const ephemeralThreadIds = new Set(
+      state.threads.filter((thread) => thread.ephemeral).map((thread) => thread.id),
+    );
     state.threads = state.threads.filter((thread) => !thread.ephemeral);
     state.messages = state.messages.filter((message) => !ephemeralThreadIds.has(message.threadId));
     state.actions = state.actions.filter((action) => !ephemeralThreadIds.has(action.threadId));
@@ -288,22 +306,28 @@ export class AgentStateStore {
       state.activeThreadId = state.threads[0]?.id ?? null;
     }
     const temporaryPath = `${this.filePath}.tmp`;
-    this.writeChain = this.writeChain.then(async () => {
-      await mkdir(path.dirname(this.filePath), { recursive: true });
-      await writeFile(temporaryPath, JSON.stringify(state, null, 2), "utf8");
-      await rename(temporaryPath, this.filePath);
-    }).catch((error: unknown) => {
-      console.error("[agent-state] unable to persist agent state", error);
-    });
+    this.writeChain = this.writeChain
+      .then(async () => {
+        await mkdir(path.dirname(this.filePath), { recursive: true });
+        await writeFile(temporaryPath, JSON.stringify(state, null, 2), "utf8");
+        await rename(temporaryPath, this.filePath);
+      })
+      .catch((error: unknown) => {
+        console.error("[agent-state] unable to persist agent state", error);
+      });
     await this.writeChain;
   }
 }
 
 export const normalizePolicy = (policy: AgentPolicy): AgentPolicy => ({
   mode: policy.mode,
-  allowedSpaceIds: policy.allowedSpaceIds ? [...new Set(policy.allowedSpaceIds.filter(Boolean))] : null,
+  allowedSpaceIds: policy.allowedSpaceIds
+    ? [...new Set(policy.allowedSpaceIds.filter(Boolean))]
+    : null,
   allowedTabIds: policy.allowedTabIds ? [...new Set(policy.allowedTabIds.filter(Boolean))] : null,
-  allowedOrigins: policy.allowedOrigins ? [...new Set(policy.allowedOrigins.filter(Boolean))] : null,
+  allowedOrigins: policy.allowedOrigins
+    ? [...new Set(policy.allowedOrigins.filter(Boolean))]
+    : null,
   allowedActions: [...new Set(policy.allowedActions)],
   allowVault: policy.allowVault,
   allowPrivate: policy.allowPrivate,
