@@ -1,7 +1,7 @@
-import { ipcMain, type BaseWindow } from "electron";
-import type { AgentCommand } from "../shared/agent-contracts";
+import { type BaseWindow, ipcMain } from "electron";
 import { isAgentPolicy } from "../ai/agent-policy";
-import { AgentRuntime } from "../ai/agent-runtime";
+import type { AgentRuntime } from "../ai/agent-runtime";
+import type { AgentCommand } from "../shared/agent-contracts";
 
 const COMMAND_TYPES = new Set([
   "agent.thread.create",
@@ -20,10 +20,13 @@ const COMMAND_TYPES = new Set([
 export const registerAgentIPC = (window: BaseWindow, runtime: AgentRuntime): void => {
   ipcMain.handle("agent:get-snapshot", () => runtime.snapshot());
   ipcMain.handle("agent:dispatch", (_event, command: unknown) => {
-    if (!isAgentCommand(command)) return { ok: false, error: "Invalid agent command", snapshot: runtime.snapshot() };
+    if (!isAgentCommand(command))
+      return { ok: false, error: "Invalid agent command", snapshot: runtime.snapshot() };
     return runtime.dispatch(command);
   });
-  ipcMain.handle("agent:get-evidence", (_event, id: unknown) => runtime.getEvidence(typeof id === "string" ? id : ""));
+  ipcMain.handle("agent:get-evidence", (_event, id: unknown) =>
+    runtime.getEvidence(typeof id === "string" ? id : ""),
+  );
 
   window.on("closed", () => {
     ipcMain.removeHandler("agent:get-snapshot");
@@ -54,9 +57,17 @@ const isAgentCommand = (value: unknown): value is AgentCommand => {
     case "agent.policy.update":
       return isString(value.threadId) && isAgentPolicy(value.policy);
     case "agent.model.update":
-      return isString(value.threadId) && isString(value.model) && ["low", "medium", "high"].includes(String(value.reasoningEffort));
+      return (
+        isString(value.threadId) &&
+        isString(value.model) &&
+        ["low", "medium", "high"].includes(String(value.reasoningEffort))
+      );
     case "agent.approval.respond":
-      return isString(value.threadId) && isString(value.approvalId) && typeof value.approved === "boolean";
+      return (
+        isString(value.threadId) &&
+        isString(value.approvalId) &&
+        typeof value.approved === "boolean"
+      );
   }
   return false;
 };
