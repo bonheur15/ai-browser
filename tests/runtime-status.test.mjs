@@ -1,6 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { aggregateMemoryUsageMb, classifyBrowserSecurity } from "../dist-electron/main/browser-runtime.js";
+import test from "node:test";
+import {
+  aggregateMemoryUsageMb,
+  classifyBrowserSecurity,
+} from "../dist-electron/main/browser-runtime.js";
 
 test("classifies browser security states", () => {
   assert.deepEqual(classifyBrowserSecurity("https://example.com"), {
@@ -25,9 +28,12 @@ test("certificate errors override normal HTTPS security", () => {
 });
 
 test("aggregates Electron working-set metrics into megabytes", () => {
-  assert.equal(aggregateMemoryUsageMb([
-    { memory: { workingSetSize: 1024 } },
-    { memory: { workingSetSize: 2048 } },
-  ]), 3);
+  assert.equal(
+    aggregateMemoryUsageMb([
+      { memory: { workingSetSize: 1024 } },
+      { memory: { workingSetSize: 2048 } },
+    ]),
+    3,
+  );
   assert.equal(aggregateMemoryUsageMb([{ memory: {} }, {}]), null);
 });
