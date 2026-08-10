@@ -258,7 +258,7 @@ input:focus-visible {
 .deck-caption { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; margin-right: 12px; color: #65717f; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap; }
 .deck-line { width: 16px; height: 1px; background: #566371; }
 .tab-list { display: flex; min-width: 0; align-items: center; gap: 7px; overflow: hidden; }
-.tab-card { display: flex; flex: 0 1 220px; min-width: 145px; max-width: 250px; height: 38px; align-items: center; border: 1px solid rgba(160, 176, 191, 0.12); border-radius: 12px; background: rgba(23, 29, 36, 0.68); transition: border-color 140ms ease, background 140ms ease, transform 140ms ease; }
+.tab-card { position: relative; display: flex; flex: 0 1 220px; min-width: 145px; max-width: 250px; height: 38px; align-items: center; border: 1px solid rgba(160, 176, 191, 0.12); border-radius: 12px; background: rgba(23, 29, 36, 0.68); transition: border-color 140ms ease, background 140ms ease, transform 140ms ease; }
 .tab-card:hover { border-color: rgba(183, 198, 212, 0.28); background: rgba(34, 42, 51, 0.8); transform: translateY(-1px); }
 .tab-card.is-active { border-color: rgba(155, 231, 196, 0.42); background: rgba(33, 49, 48, 0.86); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16); }
 .tab-card.is-hibernated { opacity: 0.64; }
@@ -272,6 +272,14 @@ input:focus-visible {
 .tab-action { display: grid; width: 22px; height: 26px; place-items: center; margin-right: 2px; border-radius: 7px; color: #6f7b88; font-size: 14px; cursor: pointer; }
 .tab-action:hover { color: #eaf1f1; background: rgba(255, 255, 255, 0.08); }
 .tab-sleep { font-size: 11px; }
+.tab-move { font-size: 13px; }
+.tab-space-menu { position: absolute; z-index: 20; top: 42px; right: 0; width: 190px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 12px; background: #202831; box-shadow: 0 18px 36px rgba(0, 0, 0, 0.4); }
+.tab-space-menu > span { display: block; margin: 1px 3px 7px; color: #87939f; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; }
+.tab-space-option { display: flex; align-items: center; gap: 4px; padding: 6px 3px; border-top: 1px solid var(--line); }
+.tab-space-option strong { display: flex; min-width: 0; flex: 1; align-items: center; gap: 6px; overflow: hidden; color: #dce4e7; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.tab-space-option i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--space-color); }
+.tab-space-option button { padding: 4px 6px; border: 1px solid transparent; border-radius: 6px; color: #91cbb0; background: rgba(155, 231, 196, 0.07); font-size: 8px; cursor: pointer; }
+.tab-space-option button:hover { border-color: rgba(155, 231, 196, 0.25); background: rgba(155, 231, 196, 0.14); }
 .new-tab-card { display: flex; min-width: 54px; height: 38px; flex-direction: column; align-items: center; justify-content: center; gap: 0; border: 1px dashed rgba(151, 168, 184, 0.24); border-radius: 12px; color: #83909d; }
 .new-tab-card:hover { color: var(--accent); border-color: rgba(155, 231, 196, 0.48); background: rgba(155, 231, 196, 0.05); }
 .new-tab-card span { font-size: 17px; line-height: 15px; }
