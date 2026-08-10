@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
+import { app, BaseWindow, WebContentsView, ipcMain, nativeTheme } from "electron";
 import path from "node:path";
 import { BrowserRuntime } from "./main/browser-runtime";
 import { registerBrowserIPC } from "./main/ipc";
@@ -10,7 +10,7 @@ import { SpaceSessionManager } from "./main/space-session-manager";
 import { SecretVault } from "./main/secret-vault";
 import { AppStateStore } from "./main/state-store";
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: BaseWindow | null = null;
 let browserRuntime: BrowserRuntime | null = null;
 let stateStore: AppStateStore | null = null;
 let secretVault: SecretVault | null = null;
@@ -22,7 +22,7 @@ let isQuitting = false;
 const isDevelopment = process.argv.includes("--dev");
 
 const createWindow = async (): Promise<void> => {
-  mainWindow = new BrowserWindow({
+  mainWindow = new BaseWindow({
     width: 1440,
     height: 900,
     minWidth: 980,
@@ -31,6 +31,10 @@ const createWindow = async (): Promise<void> => {
     frame: false,
     titleBarStyle: "hidden",
     backgroundColor: "#0b0e12",
+  });
+
+  const window = mainWindow;
+  const chrome = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -38,30 +42,40 @@ const createWindow = async (): Promise<void> => {
       sandbox: true,
     },
   });
+  chrome.setBackgroundColor("#0b0e12");
+  window.contentView.addChildView(chrome);
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
+  const resizeChrome = (): void => {
+    if (window.isDestroyed()) return;
+    const bounds = window.getContentBounds();
+    chrome.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
+  };
+  resizeChrome();
+  window.on("resize", resizeChrome);
+  window.on("maximize", resizeChrome);
+  window.on("unmaximize", resizeChrome);
+  window.on("restore", resizeChrome);
+
+  chrome.webContents.on("did-finish-load", () => {
+    console.log(`[renderer] loaded ${chrome.webContents.getURL() || "unknown URL"}`);
+    if (!window.isDestroyed()) window.show();
   });
-  mainWindow.webContents.on("did-finish-load", () => {
-    console.log(`[renderer] loaded ${mainWindow?.webContents.getURL() ?? "unknown URL"}`);
-  });
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+  chrome.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[renderer] failed to load ${validatedURL}: ${errorCode} ${errorDescription}`);
   });
-  mainWindow.webContents.on("console-message", (details) => {
+  chrome.webContents.on("console-message", (details) => {
     if (details.level === "error") {
       console.error(`[renderer:${details.sourceId}:${details.lineNumber}] ${details.message}`);
     }
   });
 
-  const window = mainWindow;
   const runtime = new BrowserRuntime(
     window,
     stateStore!,
     new SpaceSessionManager(),
     secretVault!,
     (event) => {
-      if (!window.isDestroyed()) window.webContents.send("browser:event", event);
+      if (!chrome.webContents.isDestroyed()) chrome.webContents.send("browser:event", event);
     },
   );
   browserRuntime = runtime;
@@ -71,7 +85,7 @@ const createWindow = async (): Promise<void> => {
     agentStateStore!,
     agentEvidenceStore!,
     (event) => {
-      if (!window.isDestroyed()) window.webContents.send("agent:event", event);
+      if (!chrome.webContents.isDestroyed()) chrome.webContents.send("agent:event", event);
     },
   );
   agentRuntime = agents;
@@ -80,12 +94,13 @@ const createWindow = async (): Promise<void> => {
   await runtime.initialize();
 
   if (isDevelopment) {
-    await window.loadURL("http://127.0.0.1:5173");
+    await chrome.webContents.loadURL("http://127.0.0.1:5173");
   } else {
-    await window.loadFile(path.join(__dirname, "../dist/index.html"));
+    await chrome.webContents.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
   window.on("closed", () => {
+    if (!chrome.webContents.isDestroyed()) chrome.webContents.close();
     browserRuntime = null;
     agentRuntime = null;
     mainWindow = null;
@@ -114,7 +129,7 @@ app.whenReady().then(async () => {
   await createWindow();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+    if (BaseWindow.getAllWindows().length === 0) void createWindow();
   });
 }).catch((error: unknown) => {
   console.error("[app] unable to initialize", error);
