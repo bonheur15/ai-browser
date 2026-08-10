@@ -228,17 +228,18 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
 
     if (request.type === "type") {
       const target = elementForRef(request.snapshotId, request.ref);
-      if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable)) throw new Error("The requested element cannot receive text");
-      if (target instanceof HTMLInputElement && /password|hidden|cc-|otp|one-time|security/i.test(`${target.type} ${target.autocomplete} ${target.name}`)) {
-        throw new Error("Secret fields must be filled through the Vault");
-      }
+      if (!target) throw new Error("The requested element cannot receive text");
       const text = request.text.slice(0, 20_000);
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) dispatchInput(target, request.replace ? text : `${target.value}${text}`);
-      else {
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        if (target instanceof HTMLInputElement && /password|hidden|cc-|otp|one-time|security/i.test(`${target.type} ${target.autocomplete} ${target.name}`)) {
+          throw new Error("Secret fields must be filled through the Vault");
+        }
+        dispatchInput(target, request.replace ? text : `${target.value}${text}`);
+      } else if (target instanceof HTMLElement && target.isContentEditable) {
         if (request.replace) target.textContent = "";
         target.textContent = `${target.textContent ?? ""}${text}`;
         target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
-      }
+      } else throw new Error("The requested element cannot receive text");
       pageResponse({ requestId: request.requestId, ok: true, result: { label: elementLabel(target), characters: text.length } });
       return;
     }
