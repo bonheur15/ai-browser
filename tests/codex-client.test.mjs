@@ -10,7 +10,9 @@ test("Codex client correlates concurrent responses and rejects malformed message
   const directory = await mkdtemp(path.join(os.tmpdir(), "ai-browser-codex-fixture-"));
   const executable = path.join(directory, "codex");
   const previousPath = process.env.PATH;
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 const readline = require("node:readline");
 const send = (id, result) => process.stdout.write(JSON.stringify({ id, result }) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
@@ -20,7 +22,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   else if (message.method === "echo") setTimeout(() => send(message.id, { value: message.params.value }), message.params.value === "first" ? 20 : 0);
   else if (message.method === "malformed") process.stdout.write("this-is-not-json\\n");
 });
-`, "utf8");
+`,
+    "utf8",
+  );
   await chmod(executable, 0o755);
   process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
 
@@ -40,4 +44,3 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     await rm(directory, { recursive: true, force: true });
   }
 });
-
