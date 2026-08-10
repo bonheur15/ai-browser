@@ -175,6 +175,11 @@ export type BrowserPageContext = {
   elements: BrowserPageElement[];
   scroll: { x: number; y: number; width: number; height: number; viewportWidth: number; viewportHeight: number };
   sensitiveRects: Array<{ x: number; y: number; width: number; height: number }>;
+  captchaWidgets: Array<{
+    kind: "recaptcha" | "hcaptcha" | "captcha";
+    rect: { x: number; y: number; width: number; height: number };
+    interaction: "checkbox-or-challenge";
+  }>;
 };
 
 export type BrowserPageRequest =
