@@ -1,5 +1,6 @@
 import { type Session, session } from "electron";
 import type { Space } from "../shared/contracts";
+import { browserUserAgent, shouldGrantSitePermission } from "./browser-compatibility";
 
 const CLEAR_DATA_TYPES = [
   "backgroundFetch",
@@ -23,7 +24,16 @@ export class SpaceSessionManager {
     if (existing) return existing;
 
     const current = session.fromPartition(partitionFor(space));
-    current.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    current.setUserAgent(browserUserAgent(process.versions.chrome));
+    current.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+      callback(shouldGrantSitePermission(permission, details.requestingUrl));
+    });
+    current.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
+      shouldGrantSitePermission(
+        permission,
+        details.requestingUrl ?? details.securityOrigin ?? requestingOrigin,
+      ),
+    );
     this.sessions.set(space.id, current);
     return current;
   }
