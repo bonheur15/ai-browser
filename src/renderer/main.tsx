@@ -1621,7 +1621,17 @@ function AgentCommandCenter({
   const [expanded, setExpanded] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const dragRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
+  const centerRef = useRef<HTMLElement>(null);
+  const dragRef = useRef<{
+    x: number;
+    y: number;
+    originX: number;
+    originY: number;
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  } | null>(null);
   const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.activeThreadId);
   const policy = thread?.policy ?? snapshot.globalDefaults;
   const tabMap = new Map(browserSnapshot.tabs.map((tab) => [tab.id, tab]));
@@ -1650,9 +1660,11 @@ function AgentCommandCenter({
   };
   const onPointerMove = (event: PointerEvent): void => {
     if (!dragRef.current) return;
+    const nextX = dragRef.current.originX + event.clientX - dragRef.current.x;
+    const nextY = dragRef.current.originY + event.clientY - dragRef.current.y;
     setPosition({
-      x: dragRef.current.originX + event.clientX - dragRef.current.x,
-      y: dragRef.current.originY + event.clientY - dragRef.current.y,
+      x: Math.min(dragRef.current.maxX, Math.max(dragRef.current.minX, nextX)),
+      y: Math.min(dragRef.current.maxY, Math.max(dragRef.current.minY, nextY)),
     });
   };
   const stopDrag = (): void => {
@@ -1662,11 +1674,18 @@ function AgentCommandCenter({
   };
   const startDrag = (event: React.PointerEvent): void => {
     if ((event.target as HTMLElement).closest("button")) return;
+    const bounds = centerRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const viewportInset = 12;
     dragRef.current = {
       x: event.clientX,
       y: event.clientY,
       originX: position.x,
       originY: position.y,
+      minX: position.x + viewportInset - bounds.left,
+      maxX: position.x + window.innerWidth - viewportInset - bounds.right,
+      minY: position.y + viewportInset - bounds.top,
+      maxY: position.y + window.innerHeight - viewportInset - bounds.bottom,
     };
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopDrag);
@@ -1687,6 +1706,7 @@ function AgentCommandCenter({
 
   return (
     <aside
+      ref={centerRef}
       className={`agent-center${expanded ? " is-expanded" : ""}`}
       style={
         { "--agent-x": `${position.x}px`, "--agent-y": `${position.y}px` } as React.CSSProperties
@@ -1717,7 +1737,10 @@ function AgentCommandCenter({
             type="button"
             aria-label={expanded ? "Use focused layout" : "Expand command center"}
             title={expanded ? "Use focused layout" : "Expand command center"}
-            onClick={() => setExpanded((value) => !value)}
+            onClick={() => {
+              setExpanded((value) => !value);
+              setPosition({ x: 0, y: 0 });
+            }}
           >
             {expanded ? "↙" : "↗"}
           </button>
@@ -1753,7 +1776,12 @@ function AgentCommandCenter({
                 <span className="eyebrow">THREADS</span>
                 <strong>{snapshot.threads.length} conversations</strong>
               </div>
-              <button type="button" onClick={() => onDispatch({ type: "agent.thread.create" })}>
+              <button
+                type="button"
+                aria-label="Create a new thread"
+                title="Create a new thread"
+                onClick={() => onDispatch({ type: "agent.thread.create" })}
+              >
                 ＋
               </button>
             </div>
@@ -1794,6 +1822,7 @@ function AgentCommandCenter({
                     <div className="thread-row-actions">
                       <button
                         type="button"
+                        aria-label={`Rename ${candidate.title}`}
                         title="Rename thread"
                         onClick={() => {
                           const title = window.prompt("Rename thread", candidate.title)?.trim();
@@ -1809,6 +1838,7 @@ function AgentCommandCenter({
                       </button>
                       <button
                         type="button"
+                        aria-label={`Delete ${candidate.title}`}
                         title="Delete thread"
                         onClick={() => {
                           if (window.confirm(`Delete ${candidate.title}?`))
@@ -2001,7 +2031,7 @@ function AgentCommandCenter({
       {thread && (
         <details className="agent-advanced">
           <summary>
-            <span>Advanced controls</span>
+            <span>Task settings</span>
             <small>
               {policy.mode} · {thread.model}
             </small>
@@ -2184,7 +2214,7 @@ function App() {
     agentOpen ||
     spaceDialogOpen ||
     Boolean(credentialPrompt) ||
-    Boolean(activeTab?.agentLock);
+    Boolean(snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId)?.agentLock);
 
   useLayoutEffect(() => {
     window.browserAPI?.setChromeOverlayActive(chromeOverlayActive);
