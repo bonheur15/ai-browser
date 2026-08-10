@@ -226,6 +226,7 @@ function TabDeck({
   onActivate,
   onClose,
   onHibernate,
+  onMoveTab,
 }: {
   tabs: Tab[];
   spaces: Space[];
@@ -233,8 +234,10 @@ function TabDeck({
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
   onHibernate: (tabId: string) => void;
+  onMoveTab: (tabId: string, spaceId: string, clone: boolean) => void;
 }) {
   const spaceMap = new Map(spaces.map((space) => [space.id, space]));
+  const [moveTabId, setMoveTabId] = useState<string | null>(null);
   return (
     <section className="tab-deck" aria-label="Open tabs">
       <div className="deck-caption"><span className="deck-line" />{tabs.length} open {tabs.length === 1 ? "surface" : "surfaces"}</div>
@@ -248,8 +251,10 @@ function TabDeck({
                 <span className="tab-copy"><strong>{tab.title || "New tab"}</strong><small>{hostFor(tab.url)}</small></span>
                 <span className="tab-space-label">{space?.name ?? "Unknown"}</span>
               </button>
+              <button className="tab-action tab-move" type="button" onClick={() => setMoveTabId(moveTabId === tab.id ? null : tab.id)} aria-label={`Move ${tab.title} to another Space`} title="Move or clone tab">↗</button>
               <button className="tab-action tab-sleep" type="button" onClick={() => onHibernate(tab.id)} aria-label={`Hibernate ${tab.title}`} title="Hibernate tab">z</button>
               <button className="tab-action" type="button" onClick={() => onClose(tab.id)} aria-label={`Close ${tab.title}`} title="Close tab">×</button>
+              {moveTabId === tab.id && <div className="tab-space-menu"><span>Send to another Space</span>{spaces.filter((candidate) => candidate.id !== tab.spaceId).map((target) => <div key={target.id} className="tab-space-option"><strong><i style={{ "--space-color": target.color } as React.CSSProperties} />{target.name}</strong><button type="button" onClick={() => { onMoveTab(tab.id, target.id, false); setMoveTabId(null); }}>Move</button><button type="button" onClick={() => { onMoveTab(tab.id, target.id, true); setMoveTabId(null); }}>Clone</button></div>)}</div>}
             </div>
           );
         })}
@@ -403,7 +408,7 @@ function App() {
       <div className="canvas">
         <SpaceRail snapshot={snapshot} onScope={selectScope} onCreate={() => setSpaceDialogOpen(true)} onPrivate={() => dispatch({ type: "space.createPrivate" })} onSpaceMenu={(spaceId) => { setSpaceMenuId(spaceId); }} menuSpaceId={spaceMenuId} onRename={renameSpace} onDelete={deleteSpace} />
         <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} onDispatch={dispatch} onOpenVault={() => { setDrawer(drawer === "vault" ? null : "vault"); }} onOpenSite={openSite} />
-        <TabDeck tabs={visibleTabs} spaces={snapshot.spaces} activeTabId={snapshot.activeTabId} onActivate={(tabId) => tabId ? dispatch({ type: "tab.activate", tabId }) : dispatch({ type: "tab.create" })} onClose={(tabId) => dispatch({ type: "tab.close", tabId })} onHibernate={(tabId) => dispatch({ type: "tab.hibernate", tabId })} />
+        <TabDeck tabs={visibleTabs} spaces={snapshot.spaces} activeTabId={snapshot.activeTabId} onActivate={(tabId) => tabId ? dispatch({ type: "tab.activate", tabId }) : dispatch({ type: "tab.create" })} onClose={(tabId) => dispatch({ type: "tab.close", tabId })} onHibernate={(tabId) => dispatch({ type: "tab.hibernate", tabId })} onMoveTab={(tabId, spaceId, clone) => dispatch(clone ? { type: "tab.cloneToSpace", tabId, spaceId } : { type: "tab.moveToSpace", tabId, spaceId })} />
         <div ref={viewportRef} className={`browser-viewport${drawer ? " has-drawer" : ""}`} aria-label="Browser surface"><div className="viewport-fallback"><span className="fallback-orb">✦</span><strong>Choose a surface</strong><small>Open a tab or select a Space to begin.</small></div></div>
         {drawer === "vault" && <VaultDrawer snapshot={snapshot} onDispatch={(command) => { if (command.type === "site.inspect") openSiteFromVault(command.siteId); else dispatch(command); }} onClose={() => setDrawer(null)} />}
         {drawer === "site" && <SiteDrawer snapshot={{ ...snapshot, drawer: "site" }} onDispatch={dispatch} onClose={() => setDrawer(null)} />}
