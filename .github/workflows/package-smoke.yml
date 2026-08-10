@@ -1,0 +1,68 @@
+name: Package Smoke
+
+on:
+  pull_request:
+    paths:
+      - electron-builder.yml
+      - package.json
+      - package-lock.json
+      - vite.config.mts
+      - tsconfig*.json
+      - src/**
+      - .github/workflows/package-smoke.yml
+      - .github/workflows/release.yml
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }} x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            command: dist:linux
+            paths: |
+              release/*.AppImage
+              release/*.deb
+          - platform: windows
+            os: windows-latest
+            command: dist:win
+            paths: release/*.exe
+          - platform: macos
+            os: macos-latest
+            command: dist:mac
+            paths: |
+              release/*.dmg
+              release/*.zip
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build unsigned packages
+        run: npm run ${{ matrix.command }} -- --x64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Upload manually requested packages
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-smoke-${{ matrix.platform }}-x64
+          path: ${{ matrix.paths }}
+          if-no-files-found: error
+          retention-days: 7
