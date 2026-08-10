@@ -202,6 +202,7 @@ export class BrowserRuntime {
         const tabs = this.state.getState().tabs.filter((tab) => tab.spaceId === space.id);
         for (const tab of tabs) this.destroyView(tab.id);
         if (!this.state.removeSpace(space.id)) throw new Error("The last persistent Space cannot be deleted");
+        await this.vault.removeForSpace(space.id);
         this.sessions.forget(space.id);
         this.attachTab(this.state.getState().activeTabId);
         return;
@@ -304,6 +305,14 @@ export class BrowserRuntime {
     });
     view.webContents.on("did-finish-load", () => {
       console.log(`[browser] loaded ${view.webContents.getURL()}`);
+    });
+    view.webContents.on("preload-error", (_event, preloadPath, error) => {
+      console.error(`[browser] preload failed ${preloadPath}`, error);
+    });
+    view.webContents.on("console-message", (details) => {
+      if (details.level === "error") {
+        console.error(`[browser:${details.sourceId}:${details.lineNumber}] ${details.message}`);
+      }
     });
     view.webContents.on("did-start-loading", () => this.updateTabStatus(tab.id, "loading"));
     view.webContents.on("did-stop-loading", () => this.updateTabStatus(tab.id, "loaded"));
