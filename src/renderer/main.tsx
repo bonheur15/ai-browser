@@ -27,7 +27,10 @@ import type {
   SpaceScope,
   Tab,
 } from "../shared/contracts";
+import { DEFAULT_APP_SETTINGS } from "../shared/settings";
 import { hostFor, originFor } from "./renderer-utils";
+import { SettingsPage } from "./settings-page";
+import { applyTheme } from "./theme";
 import "./styles.css";
 
 const emptySnapshot: AppSnapshot = {
@@ -42,6 +45,7 @@ const emptySnapshot: AppSnapshot = {
   drawer: null,
   selectedSiteId: null,
   vaultAvailable: false,
+  settings: structuredClone(DEFAULT_APP_SETTINGS),
 };
 
 const emptyAgentSnapshot: AgentSnapshot = {
@@ -440,6 +444,8 @@ function CommandDock({
   onOpenSite,
   agentOpen,
   onToggleAgent,
+  settingsOpen,
+  onToggleSettings,
   onToggleMaximize,
 }: {
   snapshot: AppSnapshot;
@@ -451,6 +457,8 @@ function CommandDock({
   onOpenSite: () => void;
   agentOpen: boolean;
   onToggleAgent: () => void;
+  settingsOpen: boolean;
+  onToggleSettings: () => void;
   onToggleMaximize: () => void;
 }) {
   const [input, setInput] = useState(activeTab?.url ?? "");
@@ -550,6 +558,13 @@ function CommandDock({
           active={agentOpen}
         >
           <span>✧</span>
+        </IconButton>
+        <IconButton
+          label={settingsOpen ? "Close Settings" : "Open Settings"}
+          onClick={onToggleSettings}
+          active={settingsOpen}
+        >
+          <span>⚙</span>
         </IconButton>
         <IconButton label="Open Vault" onClick={onOpenVault} active={snapshot.drawer === "vault"}>
           <span>◒</span>
@@ -2105,7 +2120,9 @@ function App() {
 
   const dispatch = (command: BrowserCommand): void => {
     if (command.type === "credential.reject") setCredentialPrompt(null);
-    void window.browserAPI?.dispatch(command).then((result) => {
+    const request = window.browserAPI?.dispatch(command);
+    if (!request) return;
+    void request.then((result) => {
       if (command.type === "credential.save" && result?.ok) setCredentialPrompt(null);
       if (!result.ok) setToast({ tone: "error", message: result.error });
       else setSnapshot(result.snapshot);
