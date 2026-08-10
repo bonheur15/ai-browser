@@ -27,7 +27,7 @@ import type {
   SpaceScope,
   Tab,
 } from "../shared/contracts";
-import { DEFAULT_APP_SETTINGS } from "../shared/settings";
+import { DEFAULT_APP_SETTINGS, normalizeSettings } from "../shared/settings";
 import { hostFor, originFor } from "./renderer-utils";
 import { SettingsPage } from "./settings-page";
 import { applyTheme } from "./theme";
@@ -47,6 +47,11 @@ const emptySnapshot: AppSnapshot = {
   vaultAvailable: false,
   settings: structuredClone(DEFAULT_APP_SETTINGS),
 };
+
+const normalizeBrowserSnapshot = (snapshot: AppSnapshot): AppSnapshot => ({
+  ...snapshot,
+  settings: normalizeSettings(snapshot.settings),
+});
 
 const emptyAgentSnapshot: AgentSnapshot = {
   connection: { status: "stopped" },
@@ -2051,6 +2056,33 @@ function AgentCommandCenter({
   );
 }
 
+function BrowserInteractionShield({ tab, hasDrawer }: { tab: Tab; hasDrawer: boolean }) {
+  const shieldRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    shieldRef.current?.focus({ preventScroll: true });
+  }, [tab.id, tab.agentLock?.threadId]);
+
+  return (
+    <div
+      ref={shieldRef}
+      className={`browser-interaction-shield${hasDrawer ? " has-drawer" : ""}`}
+      role="status"
+      tabIndex={0}
+      aria-label="Agent is using this tab"
+      onContextMenu={(event) => event.preventDefault()}
+      onKeyDown={(event) => event.preventDefault()}
+      onPointerDown={(event) => event.preventDefault()}
+      onWheel={(event) => event.preventDefault()}
+    >
+      <span>
+        <i>✦</i>
+        Agent is using this tab. Switch tabs to keep browsing.
+      </span>
+    </div>
+  );
+}
+
 function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(emptySnapshot);
   const [runtimeStatus, setRuntimeStatus] = useState<BrowserRuntimeStatus>(emptyRuntimeStatus);
@@ -2058,6 +2090,7 @@ function App() {
   const [maximized, setMaximized] = useState(false);
   const [drawer, setDrawer] = useState<"vault" | "site" | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [credentialPrompt, setCredentialPrompt] = useState<
     Extract<BrowserEvent, { type: "credential-save-request" }>["request"] | null
   >(null);
@@ -2073,9 +2106,9 @@ function App() {
   useEffect(() => {
     const browser = window.browserAPI;
     if (!browser) return;
-    void browser.getSnapshot().then(setSnapshot);
+    void browser.getSnapshot().then((next) => setSnapshot(normalizeBrowserSnapshot(next)));
     return browser.subscribe((event) => {
-      if (event.type === "snapshot") setSnapshot(event.snapshot);
+      if (event.type === "snapshot") setSnapshot(normalizeBrowserSnapshot(event.snapshot));
       if (event.type === "runtime-status") setRuntimeStatus(event.status);
       if (event.type === "credential-save-request") setCredentialPrompt(event.request);
       if (event.type === "toast") {
@@ -2100,6 +2133,34 @@ function App() {
     if (window.windowControls) void window.windowControls.isMaximized().then(setMaximized);
   }, []);
 
+  useEffect(() => {
+    const { mode, accent } = snapshot.settings.appearance;
+    applyTheme(mode, accent);
+    if (mode !== "system") return;
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const update = (): void => applyTheme(mode, accent);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [snapshot.settings.appearance]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null;
+      const editing = target?.matches("input, textarea, select, [contenteditable='true']");
+      if ((event.metaKey || event.ctrlKey) && event.key === ",") {
+        event.preventDefault();
+        setDrawer(null);
+        setAgentOpen(false);
+        setSettingsOpen(true);
+      } else if (event.key === "Escape" && settingsOpen && !editing) {
+        event.preventDefault();
+        setSettingsOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [settingsOpen]);
+
   useLayoutEffect(() => {
     const element = viewportRef.current;
     if (!element || !window.browserAPI) return;
@@ -2118,6 +2179,18 @@ function App() {
     return () => observer.disconnect();
   }, [drawer]);
 
+  const chromeOverlayActive =
+    settingsOpen ||
+    agentOpen ||
+    spaceDialogOpen ||
+    Boolean(credentialPrompt) ||
+    Boolean(activeTab?.agentLock);
+
+  useLayoutEffect(() => {
+    window.browserAPI?.setChromeOverlayActive(chromeOverlayActive);
+    return () => window.browserAPI?.setChromeOverlayActive(false);
+  }, [chromeOverlayActive]);
+
   const dispatch = (command: BrowserCommand): void => {
     if (command.type === "credential.reject") setCredentialPrompt(null);
     const request = window.browserAPI?.dispatch(command);
@@ -2125,7 +2198,7 @@ function App() {
     void request.then((result) => {
       if (command.type === "credential.save" && result?.ok) setCredentialPrompt(null);
       if (!result.ok) setToast({ tone: "error", message: result.error });
-      else setSnapshot(result.snapshot);
+      else setSnapshot(normalizeBrowserSnapshot(result.snapshot));
     });
   };
 
@@ -2198,6 +2271,17 @@ function App() {
     setSpaceMenuId(null);
   };
 
+  const toggleSettings = (): void => {
+    setSettingsOpen((current) => {
+      const next = !current;
+      if (next) {
+        setDrawer(null);
+        setAgentOpen(false);
+      }
+      return next;
+    });
+  };
+
   return (
     <main className="app-shell" onClick={() => spaceMenuId && setSpaceMenuId(null)}>
       <div className="canvas">
@@ -2219,10 +2303,12 @@ function App() {
           activeSpace={activeSpace}
           maximized={maximized}
           agentOpen={agentOpen}
+          settingsOpen={settingsOpen}
           onDispatch={dispatch}
           onOpenVault={() => setDrawer(drawer === "vault" ? null : "vault")}
           onOpenSite={openSite}
           onToggleAgent={() => setAgentOpen((current) => !current)}
+          onToggleSettings={toggleSettings}
           onToggleMaximize={() => {
             window.windowControls?.toggleMaximize();
             setMaximized((current) => !current);
@@ -2258,6 +2344,25 @@ function App() {
             </div>
           )}
         </div>
+        {activeTab?.agentLock && (
+          <BrowserInteractionShield tab={activeTab} hasDrawer={Boolean(drawer)} />
+        )}
+        {settingsOpen && (
+          <SettingsPage
+            snapshot={snapshot}
+            agentSnapshot={agentSnapshot}
+            onDispatch={dispatch}
+            onDispatchAgent={dispatchAgent}
+            onClose={() => setSettingsOpen(false)}
+            onCreateSpace={() => setSpaceDialogOpen(true)}
+            onRenameSpace={(space, name) => {
+              const nextName = name.trim();
+              if (nextName && nextName !== space.name)
+                dispatch({ type: "space.rename", spaceId: space.id, name: nextName });
+            }}
+            onDeleteSpace={deleteSpace}
+          />
+        )}
         <BottomStatusToolbar
           snapshot={snapshot}
           runtimeStatus={runtimeStatus}
