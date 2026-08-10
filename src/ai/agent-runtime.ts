@@ -13,7 +13,7 @@ import type {
 import { isJsonObject, type JsonObject, type JsonValue } from "../shared/json";
 import type { AgentEvidenceStore } from "./agent-evidence-store";
 import { AgentPolicyEngine, isAgentPolicy } from "./agent-policy";
-import { type AgentStateStore, normalizePolicy } from "./agent-state-store";
+import { defaultAgentPolicy, type AgentStateStore, normalizePolicy } from "./agent-state-store";
 import { BrowserAgentTools } from "./browser-agent-tools";
 import {
   CodexAppServerClient,
@@ -157,6 +157,13 @@ export class AgentRuntime {
 
   private async execute(command: AgentCommand): Promise<void> {
     switch (command.type) {
+      case "agent.defaults.update":
+        if (!isAgentPolicy(command.policy)) throw new Error("Invalid agent policy");
+        this.state.updateGlobalDefaults(normalizePolicy(command.policy));
+        return;
+      case "agent.defaults.reset":
+        this.state.updateGlobalDefaults(defaultAgentPolicy());
+        return;
       case "agent.thread.create": {
         const browserState = this.browser.snapshot();
         const activeSpace = browserState.spaces.find(
