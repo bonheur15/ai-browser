@@ -355,7 +355,9 @@ function EvidencePreview({ id }: { id: string }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    void window.agentAPI?.getEvidence(id).then((evidence) => {
+    const request = window.agentAPI?.getEvidence(id);
+    if (!request) return () => { active = false; };
+    void request.then((evidence) => {
       if (active) setDataUrl(evidence?.dataUrl ?? null);
     });
     return () => { active = false; };
@@ -460,6 +462,7 @@ function AgentDock({
               <div className="agent-setting-row"><span>Spaces</span><button className={policy.allowedSpaceIds === null ? "is-selected" : ""} type="button" onClick={() => updatePolicy({ allowedSpaceIds: null })}>All persistent</button></div>
               <div className="agent-space-toggles">{browserSnapshot.spaces.map((space) => <button key={space.id} type="button" className={policy.allowedSpaceIds?.includes(space.id) ? "is-selected" : ""} onClick={() => toggleSpace(space.id)}><i style={{ "--space-color": space.color } as React.CSSProperties} />{space.name}</button>)}</div>
               <div className="agent-setting-row"><span>Vault fills</span><button className={policy.allowVault ? "is-selected" : ""} type="button" onClick={() => updatePolicy({ allowVault: !policy.allowVault })}>{policy.allowVault ? "Allowed" : "Blocked"}</button></div>
+              <div className="agent-setting-row"><span>Private context</span><button className={policy.allowPrivate ? "is-selected" : ""} type="button" onClick={() => updatePolicy({ allowPrivate: !policy.allowPrivate })}>{policy.allowPrivate ? "Allowed" : "Blocked"}</button></div>
               <div className="agent-setting-row"><span>Tab limit</span><select value={policy.maxTabs} onChange={(event) => updatePolicy({ maxTabs: Number(event.target.value) })}><option value="4">4 tabs</option><option value="8">8 tabs</option><option value="16">16 tabs</option><option value="24">24 tabs</option><option value="48">48 tabs</option></select></div>
               <form className="agent-origin-form" onSubmit={addOrigin}><input value={originInput} onChange={(event) => setOriginInput(event.target.value)} placeholder="Limit to an origin" aria-label="Add allowed origin" /><button type="submit">Add</button></form>
               {policy.allowedOrigins && policy.allowedOrigins.length > 0 && <div className="agent-origin-list">{policy.allowedOrigins.map((origin) => <button key={origin} type="button" onClick={() => updatePolicy({ allowedOrigins: policy.allowedOrigins?.filter((candidate) => candidate !== origin) ?? null })}>{origin} ×</button>)}</div>}
@@ -547,7 +550,9 @@ function App() {
   };
 
   const dispatchAgent = (command: AgentCommand): void => {
-    void window.agentAPI?.dispatch(command).then((result) => {
+    const request = window.agentAPI?.dispatch(command);
+    if (!request) return;
+    void request.then((result) => {
       if (!result) return;
       setAgentSnapshot(result.snapshot);
       if (!result.ok) setToast({ tone: "error", message: result.error });
