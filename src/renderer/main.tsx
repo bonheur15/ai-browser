@@ -11,6 +11,7 @@ import type {
 } from "../shared/contracts";
 import type {
   AgentCommand,
+  AgentActionClass,
   AgentEvent,
   AgentMode,
   AgentPolicy,
@@ -51,6 +52,17 @@ const emptyAgentSnapshot: AgentSnapshot = {
     maxTabs: 24,
   },
 };
+
+const agentActionOptions: Array<[AgentActionClass, string]> = [
+  ["read", "Read"],
+  ["navigate", "Navigate"],
+  ["tab-management", "Tabs"],
+  ["page-interaction", "Interact"],
+  ["credential-fill", "Vault"],
+  ["form-submit", "Submit"],
+  ["external-side-effect", "External effects"],
+  ["destructive", "Destructive"],
+];
 
 const iconFor = (icon: string): string => ({
   home: "⌂",
@@ -408,6 +420,22 @@ function AgentDock({
     updatePolicy({ allowedSpaceIds: next });
   };
 
+  const toggleTab = (tabId: string): void => {
+    const next = policy.allowedTabIds === null
+      ? [tabId]
+      : policy.allowedTabIds.includes(tabId)
+        ? policy.allowedTabIds.filter((id) => id !== tabId)
+        : [...policy.allowedTabIds, tabId];
+    updatePolicy({ allowedTabIds: next });
+  };
+
+  const toggleAction = (action: AgentActionClass): void => {
+    const next = policy.allowedActions.includes(action)
+      ? policy.allowedActions.filter((candidate) => candidate !== action)
+      : [...policy.allowedActions, action];
+    updatePolicy({ allowedActions: next });
+  };
+
   const addOrigin = (event: FormEvent): void => {
     event.preventDefault();
     const origin = originInput.trim().replace(/\/$/, "");
@@ -463,6 +491,10 @@ function AgentDock({
               <div className="agent-space-toggles">{browserSnapshot.spaces.map((space) => <button key={space.id} type="button" className={policy.allowedSpaceIds?.includes(space.id) ? "is-selected" : ""} onClick={() => toggleSpace(space.id)}><i style={{ "--space-color": space.color } as React.CSSProperties} />{space.name}</button>)}</div>
               <div className="agent-setting-row"><span>Vault fills</span><button className={policy.allowVault ? "is-selected" : ""} type="button" onClick={() => updatePolicy({ allowVault: !policy.allowVault })}>{policy.allowVault ? "Allowed" : "Blocked"}</button></div>
               <div className="agent-setting-row"><span>Private context</span><button className={policy.allowPrivate ? "is-selected" : ""} type="button" onClick={() => updatePolicy({ allowPrivate: !policy.allowPrivate })}>{policy.allowPrivate ? "Allowed" : "Blocked"}</button></div>
+              <div className="agent-setting-row"><span>Tabs</span><button className={policy.allowedTabIds === null ? "is-selected" : ""} type="button" onClick={() => updatePolicy({ allowedTabIds: null })}>All in scope</button></div>
+              <div className="agent-space-toggles agent-tab-toggles">{browserSnapshot.tabs.map((tab) => <button key={tab.id} type="button" className={policy.allowedTabIds?.includes(tab.id) ? "is-selected" : ""} onClick={() => toggleTab(tab.id)}><span>{tab.title || hostFor(tab.url)}</span><small>{spaceMap.get(tab.spaceId)?.name ?? "Space"}</small></button>)}</div>
+              <div className="agent-setting-row"><span>Action classes</span><button type="button" onClick={() => updatePolicy({ allowedActions: [...emptyAgentSnapshot.globalDefaults.allowedActions] })}>Allow all</button></div>
+              <div className="agent-space-toggles agent-action-toggles">{agentActionOptions.map(([action, label]) => <button key={action} type="button" className={policy.allowedActions.includes(action) ? "is-selected" : ""} onClick={() => toggleAction(action)}>{label}</button>)}</div>
               <div className="agent-setting-row"><span>Tab limit</span><select value={policy.maxTabs} onChange={(event) => updatePolicy({ maxTabs: Number(event.target.value) })}><option value="4">4 tabs</option><option value="8">8 tabs</option><option value="16">16 tabs</option><option value="24">24 tabs</option><option value="48">48 tabs</option></select></div>
               <form className="agent-origin-form" onSubmit={addOrigin}><input value={originInput} onChange={(event) => setOriginInput(event.target.value)} placeholder="Limit to an origin" aria-label="Add allowed origin" /><button type="submit">Add</button></form>
               {policy.allowedOrigins && policy.allowedOrigins.length > 0 && <div className="agent-origin-list">{policy.allowedOrigins.map((origin) => <button key={origin} type="button" onClick={() => updatePolicy({ allowedOrigins: policy.allowedOrigins?.filter((candidate) => candidate !== origin) ?? null })}>{origin} ×</button>)}</div>}
