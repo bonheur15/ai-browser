@@ -8,6 +8,10 @@ import type {
   BrowserViewportBounds,
   CommandResult,
   CredentialSaveRequest,
+  CredentialSummary,
+  BrowserPageContext,
+  BrowserPageRequest,
+  BrowserPageResponse,
   SiteRecord,
   Space,
   StoredCredential,
@@ -87,6 +91,8 @@ const navigationUrl = (input: string): string => {
 export class BrowserRuntime {
   private readonly views = new Map<string, WebContentsView>();
   private readonly pendingCandidates = new Map<string, PendingCandidate>();
+  private readonly pendingPageRequests = new Map<string, { senderId: number; resolve: (response: BrowserPageResponse) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  private readonly pendingFillResults = new Map<string, { senderId: number; resolve: (ok: boolean) => void; timer: NodeJS.Timeout }>();
   private attachedTabId: string | null = null;
   private viewport: BrowserViewportBounds = { x: 92, y: 154, width: 1120, height: 600 };
 
@@ -127,6 +133,115 @@ export class BrowserRuntime {
     this.resizeAttachedView();
   }
 
+  getAgentTab(tabId: string): Tab {
+    return this.requireTab(tabId);
+  }
+
+  getAgentSpace(spaceId: string): Space {
+    return this.requireSpace(spaceId);
+  }
+
+  listAgentCredentials(spaceId: string, origin?: string): CredentialSummary[] {
+    return this.vault.summaries(spaceId).filter((credential) => !origin || credential.origin === origin);
+  }
+
+  async agentCreateTab(spaceId: string, url = DEFAULT_URL): Promise<Tab> {
+    return this.createTab(spaceId, url === DEFAULT_URL ? DEFAULT_URL : navigationUrl(url));
+  }
+
+  async agentCloseTab(tabId: string): Promise<void> {
+    await this.closeTab(tabId);
+  }
+
+  async agentActivateTab(tabId: string): Promise<void> {
+    await this.activateTab(tabId);
+  }
+
+  async agentCloneTab(tabId: string, spaceId: string): Promise<Tab> {
+    return this.cloneTab(tabId, spaceId, false);
+  }
+
+  async agentMoveTab(tabId: string, spaceId: string): Promise<Tab> {
+    return this.cloneTab(tabId, spaceId, true);
+  }
+
+  async agentNavigate(tabId: string, input: string): Promise<void> {
+    await this.activateTab(tabId);
+    await this.loadTabURL(this.requireView(tabId), navigationUrl(input));
+  }
+
+  async agentBack(tabId: string): Promise<void> {
+    await this.activateTab(tabId);
+    this.requireView(tabId).webContents.goBack();
+  }
+
+  async agentForward(tabId: string): Promise<void> {
+    await this.activateTab(tabId);
+    this.requireView(tabId).webContents.goForward();
+  }
+
+  async agentReload(tabId: string): Promise<void> {
+    await this.activateTab(tabId);
+    this.requireView(tabId).webContents.reload();
+  }
+
+  async agentPageRequest(tabId: string, request: Omit<BrowserPageRequest, "requestId">): Promise<BrowserPageResponse> {
+    await this.activateTab(tabId);
+    const view = this.requireView(tabId);
+    const requestId = randomUUID();
+    const pageRequest = { ...request, requestId } as BrowserPageRequest;
+    return new Promise<BrowserPageResponse>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingPageRequests.delete(requestId);
+        reject(new Error("The page did not respond in time"));
+      }, 20_000);
+      this.pendingPageRequests.set(requestId, { senderId: view.webContents.id, resolve, reject, timer });
+      view.webContents.send("browser:agent-page-request", pageRequest);
+    });
+  }
+
+  async agentPageContext(tabId: string): Promise<BrowserPageContext> {
+    const response = await this.agentPageRequest(tabId, { type: "context" });
+    if (!response.ok || !response.context) throw new Error(response.error ?? "Unable to read the page context");
+    return response.context;
+  }
+
+  async agentCaptureScreenshot(tabId: string): Promise<{ dataUrl: string; url: string; title: string }> {
+    const context = await this.agentPageContext(tabId);
+    try {
+      const redaction = await this.agentPageRequest(tabId, { type: "redact", snapshotId: context.snapshotId, enabled: true });
+      if (!redaction.ok) throw new Error(redaction.error ?? "Unable to redact sensitive fields before taking a screenshot");
+      const image = await this.requireView(tabId).webContents.capturePage();
+      const size = image.getSize();
+      const resized = size.width > 1280 ? image.resize({ width: 1280 }) : image;
+      return { dataUrl: resized.toDataURL(), url: context.url, title: context.title };
+    } finally {
+      try {
+        await this.agentPageRequest(tabId, { type: "redact", snapshotId: context.snapshotId, enabled: false });
+      } catch {
+        // The page may have navigated while the screenshot was being captured.
+      }
+    }
+  }
+
+  async agentFillCredential(credentialId: string, tabId: string): Promise<boolean> {
+    const tab = this.requireTab(tabId);
+    const credential = this.vault.get(credentialId, tab.spaceId);
+    if (!credential) throw new Error("Credential is not available in this Space");
+    if (originFor(tab.url) !== credential.origin) throw new Error("Credential origin does not match the active page");
+    await this.activateTab(tab.id);
+    return this.fillCredential(credentialId, tab.id);
+  }
+
+  handleAgentPageResponse(sender: WebContents, response: unknown): void {
+    if (!isBrowserPageResponse(response)) return;
+    const pending = this.pendingPageRequests.get(response.requestId);
+    if (!pending || pending.senderId !== sender.id) return;
+    clearTimeout(pending.timer);
+    this.pendingPageRequests.delete(response.requestId);
+    pending.resolve(response);
+  }
+
   async dispatch(command: BrowserCommand): Promise<CommandResult> {
     try {
       await this.execute(command);
@@ -147,7 +262,6 @@ export class BrowserRuntime {
     if (!senderOrigin || candidate.origin !== senderOrigin) return;
     const space = this.getSpace(tab.spaceId);
     if (!space || space.kind === "private") return;
-    console.log(`[credentials] login candidate received for ${candidate.hostname}`);
     if (!this.vault.available) {
       this.emit({ type: "toast", tone: "error", message: "Password saving is unavailable because secure OS storage is not available" });
       return;
@@ -172,12 +286,17 @@ export class BrowserRuntime {
 
   handleCredentialFillResult(sender: WebContents, result: unknown): void {
     if (!isObject(result) || typeof result.requestId !== "string") return;
+    const pending = this.pendingFillResults.get(result.requestId);
+    if (pending && pending.senderId === sender.id) {
+      clearTimeout(pending.timer);
+      this.pendingFillResults.delete(result.requestId);
+      pending.resolve(result.ok === true);
+    }
     this.emit({
       type: "toast",
       tone: result.ok === true ? "success" : "error",
       message: result.ok === true ? "Credential filled" : "No compatible login form found",
     });
-    void sender;
   }
 
   async flush(): Promise<void> {
@@ -301,7 +420,7 @@ export class BrowserRuntime {
         this.rejectCredential(command.requestId, command.neverForSite === true);
         return;
       case "credential.fill":
-        this.fillCredential(command.credentialId, command.tabId);
+        await this.fillCredential(command.credentialId, command.tabId);
         return;
       case "credential.remove":
         await this.removeCredential(command.credentialId);
@@ -406,7 +525,7 @@ export class BrowserRuntime {
     else this.attachTab(this.state.getState().activeTabId);
   }
 
-  private async cloneTab(tabId: string, spaceId: string, closeOriginal: boolean): Promise<void> {
+  private async cloneTab(tabId: string, spaceId: string, closeOriginal: boolean): Promise<Tab> {
     const tab = this.requireTab(tabId);
     this.requireSpace(spaceId);
     const created = await this.createTab(spaceId, tab.url);
@@ -415,6 +534,7 @@ export class BrowserRuntime {
       this.state.removeTab(tab.id);
     }
     await this.activateTab(created.id);
+    return created;
   }
 
   private hibernate(tabId: string): void {
@@ -526,16 +646,25 @@ export class BrowserRuntime {
     }
   }
 
-  private fillCredential(credentialId: string, tabId?: string): void {
+  private async fillCredential(credentialId: string, tabId?: string): Promise<boolean> {
     const tab = this.requireTab(tabId);
     const credential = this.vault.get(credentialId, tab.spaceId);
     if (!credential) throw new Error("Credential is not available in this Space");
     const view = this.requireView(tab.id);
+    const requestId = randomUUID();
+    const result = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingFillResults.delete(requestId);
+        resolve(false);
+      }, 10_000);
+      this.pendingFillResults.set(requestId, { senderId: view.webContents.id, resolve, timer });
+    });
     view.webContents.send("browser:fill-credential", {
-      requestId: randomUUID(),
+      requestId,
       username: credential.username,
       password: credential.password,
     });
+    return result;
   }
 
   private async removeCredential(credentialId: string): Promise<void> {
@@ -683,3 +812,10 @@ const isLoginCandidate = (value: unknown): value is LoginCandidate =>
   typeof value.username === "string" &&
   typeof value.password === "string" &&
   value.password.length > 0;
+
+const isBrowserPageResponse = (value: unknown): value is BrowserPageResponse =>
+  isObject(value) &&
+  typeof value.requestId === "string" &&
+  typeof value.ok === "boolean" &&
+  (value.context === undefined || isObject(value.context)) &&
+  (value.result === undefined || isObject(value.result));
