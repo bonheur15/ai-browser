@@ -34,6 +34,7 @@ import {
 import type { SecretVault } from "./secret-vault";
 import type { SpaceSessionManager } from "./space-session-manager";
 import type { AppStateStore } from "./state-store";
+import { interactiveTopView } from "./view-stacking";
 
 type LoginCandidate = {
   origin: string;
@@ -1017,11 +1018,9 @@ export class BrowserRuntime {
 
   private restackAttachedView(): void {
     const page = this.attachedTabId ? this.views.get(this.attachedTabId) : undefined;
-    if (this.chromeOverlayActive || !page) {
-      this.window.contentView.addChildView(this.chrome);
-      return;
-    }
-    this.window.contentView.addChildView(page);
+    this.window.contentView.addChildView(
+      interactiveTopView(this.chrome, page, this.chromeOverlayActive),
+    );
   }
 
   private resizeAttachedView(): void {
