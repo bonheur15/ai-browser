@@ -11,6 +11,12 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "test": "npm run build:electron && node --test tests/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "format": "biome format --write",
+    "format:check": "biome format",
+    "lint": "biome lint",
+    "check": "biome ci",
+    "check:write": "biome check --write",
+    "verify": "npm run check && npm run typecheck && npm test && npm run build",
     "start": "env -u ELECTRON_RUN_AS_NODE electron ."
   },
   "dependencies": {
@@ -20,12 +26,13 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.7",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "concurrently": "^10.0.4",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
-    "wait-on": "^9.1.0",
-    "@types/node": "^26.2.0",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4"
+    "wait-on": "^9.1.0"
   }
 }
