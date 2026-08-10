@@ -66,7 +66,17 @@ npm test
 git diff --check
 ```
 
-The current automated suite covers state persistence and private-state filtering, agent policy, Codex protocol correlation, browser security classification, memory metrics, and Space/tab seeding. Full Electron end-to-end coverage and packaging are not yet included.
+The current automated suite covers state persistence and private-state filtering, agent policy, Codex protocol correlation, browser security classification, memory metrics, and Space/tab seeding. Full Electron end-to-end coverage is not yet included.
+
+## Releases
+
+GitHub Actions verifies the project on Linux, macOS, and Windows and produces x64 desktop packages
+with electron-builder. Release Please maintains version bumps, release pull requests, tags, GitHub
+Releases, and `CHANGELOG.md` from Conventional Commit titles.
+
+Published releases contain Windows installer/portable executables, macOS DMG/ZIP packages, Linux
+AppImage/Debian packages, SHA-256 checksums, an SPDX SBOM, and GitHub build-provenance attestations.
+See [docs/RELEASING.md](docs/RELEASING.md) for the release process and signing-secret setup.
 
 ## AI agent setup
 
@@ -122,7 +132,7 @@ Important directories:
 
 ## Current limitations
 
-This repository is a working foundation rather than a packaged browser release. It does not yet include cloud sync, extensions, history, downloads management, shell/filesystem access, automatic tab hibernation, a full permissions UI, installer/signing configuration, or Electron end-to-end tests. Site-data clearing and some Agent diagnostics remain partial; see `PROJECT_DOCUMENTATION.md` for the complete status and roadmap.
+This repository is a working foundation. It does not yet include cloud sync, extensions, history, downloads management, shell/filesystem access, automatic tab hibernation, a full permissions UI, automatic updates, app-store publishing, or Electron end-to-end tests. Installer packages are automated, but trusted public distribution still requires the platform signing secrets described in the release guide. Site-data clearing and some Agent diagnostics remain partial; see `PROJECT_DOCUMENTATION.md` for the complete status and roadmap.
 
 ## License
 
