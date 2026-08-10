@@ -4,6 +4,7 @@ import type {
   AgentPolicy,
   BrowserPageContext,
   BrowserPageRequest,
+  BrowserPageRequestInput,
 } from "../shared/agent-contracts";
 import type { CodexServerRequest, DynamicToolNamespace, JsonObject } from "./codex-protocol";
 import { browserDynamicTools } from "./codex-app-server-client";
@@ -131,13 +132,12 @@ export class BrowserAgentTools {
         const snapshot = this.browser.snapshot();
         const tabs = snapshot.tabs
           .filter((tab) => !policy.allowedTabIds || policy.allowedTabIds.includes(tab.id))
-          .map((tab) => snapshot.spaces.find((space) => space.id === tab.spaceId) ? { ...tab, spaceName: snapshot.spaces.find((space) => space.id === tab.spaceId)?.name } : null)
-          .filter((tab): tab is Tab & { spaceName?: string } => Boolean(tab))
-          .filter((tab) => {
-            const space = snapshot.spaces.find((candidate) => candidate.id === tab.spaceId);
-            return Boolean(space && (space.kind !== "private" || policy.allowPrivate) && (!policy.allowedSpaceIds || policy.allowedSpaceIds.includes(tab.spaceId)) && this.policies.originAllowed(policy.allowedOrigins, tab.url));
-          })
-          .map((tab) => ({ id: tab.id, spaceId: tab.spaceId, spaceName: tab.spaceName, title: tab.title, url: tab.url, status: tab.status }));
+          .map((tab) => ({ tab, space: snapshot.spaces.find((space) => space.id === tab.spaceId) }))
+          .filter((entry): entry is { tab: Tab; space: NonNullable<typeof entry.space> } => Boolean(entry.space))
+          .filter(({ tab, space }) => space.kind !== "private" || policy.allowPrivate)
+          .filter(({ tab }) => !policy.allowedSpaceIds || policy.allowedSpaceIds.includes(tab.spaceId))
+          .filter(({ tab }) => this.policies.originAllowed(policy.allowedOrigins, tab.url))
+          .map(({ tab, space }) => ({ id: tab.id, spaceId: tab.spaceId, spaceName: space.name, title: tab.title, url: tab.url, status: tab.status }));
         return success({ type: "inputText", text: JSON.stringify({ tabs }) });
       }
       case "create_tab": {
@@ -151,10 +151,10 @@ export class BrowserAgentTools {
         return success({ type: "inputText", text: JSON.stringify({ tab: this.tabSummary(tab, space.name) }) });
       }
       case "close_tab":
-        await this.browser.agentCloseTab(this.requireTab(target));
+        await this.browser.agentCloseTab(this.requireTab(target).id);
         return success({ type: "inputText", text: "Tab closed" });
       case "activate_tab":
-        await this.browser.agentActivateTab(this.requireTab(target));
+        await this.browser.agentActivateTab(this.requireTab(target).id);
         return success({ type: "inputText", text: "Tab activated" });
       case "clone_tab": {
         const tab = this.requireTab(target);
@@ -246,7 +246,7 @@ export class BrowserAgentTools {
 
   private async runPageMutation(normalized: string, args: JsonObject, _policy: AgentPolicy, tab: Tab): Promise<BrowserToolResponse> {
     const context = await this.browser.agentPageContext(tab.id);
-    let request: Omit<BrowserPageRequest, "requestId">;
+    let request: BrowserPageRequestInput;
     if (normalized === "click") {
       const ref = optionalText(args.ref, "ref", 80);
       const hasCoordinates = typeof args.x === "number" && typeof args.y === "number";
