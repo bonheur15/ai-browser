@@ -13,6 +13,8 @@ import type {
 
 const GOOGLE_URL = "https://www.google.com";
 const DEFAULT_COLORS = ["#9be7c4", "#8db4ff", "#f4bf7a", "#d8a5ff", "#ff9d9d"];
+const defaultColor = (index: number): string =>
+  DEFAULT_COLORS[index] ?? DEFAULT_COLORS[0] ?? "#9be7c4";
 
 const now = (): string => new Date().toISOString();
 
@@ -27,8 +29,8 @@ const starterSpace = (id: string, name: string, color: string): Space => ({
 });
 
 const createDefaultState = (): PersistedState => {
-  const personal = starterSpace("personal", "Personal", DEFAULT_COLORS[0]);
-  const work = starterSpace("work", "Work", DEFAULT_COLORS[1]);
+  const personal = starterSpace("personal", "Personal", defaultColor(0));
+  const work = starterSpace("work", "Work", defaultColor(1));
   const firstTab: Tab = {
     id: randomUUID(),
     spaceId: personal.id,
@@ -102,12 +104,17 @@ export class AppStateStore {
     return this.getState();
   }
 
-  addSpace(input: { name: string; color?: string; icon?: string; kind?: "persistent" | "private" }): Space {
+  addSpace(input: {
+    name: string;
+    color?: string;
+    icon?: string;
+    kind?: "persistent" | "private";
+  }): Space {
     const timestamp = now();
     const space: Space = {
       id: `${input.kind === "private" ? "private" : "space"}-${randomUUID()}`,
       name: input.name.trim() || "New Space",
-      color: input.color ?? DEFAULT_COLORS[this.state.spaces.length % DEFAULT_COLORS.length],
+      color: input.color ?? defaultColor(this.state.spaces.length % DEFAULT_COLORS.length),
       icon: input.icon ?? "sparkles",
       kind: input.kind ?? "persistent",
       createdAt: timestamp,
@@ -121,7 +128,9 @@ export class AppStateStore {
   removeSpace(spaceId: string): boolean {
     const space = this.state.spaces.find((candidate) => candidate.id === spaceId);
     if (!space) return false;
-    const persistentSpaces = this.state.spaces.filter((candidate) => candidate.kind === "persistent");
+    const persistentSpaces = this.state.spaces.filter(
+      (candidate) => candidate.kind === "persistent",
+    );
     if (space.kind === "persistent" && persistentSpaces.length <= 1) return false;
 
     this.state.spaces = this.state.spaces.filter((candidate) => candidate.id !== spaceId);
@@ -231,7 +240,10 @@ export class AppStateStore {
     return this.state.tabs.filter((tab) => scope === "all" || tab.spaceId === scope);
   }
 
-  snapshot(credentials: import("../shared/contracts").CredentialSummary[], vaultAvailable: boolean): AppSnapshot {
+  snapshot(
+    credentials: import("../shared/contracts").CredentialSummary[],
+    vaultAvailable: boolean,
+  ): AppSnapshot {
     return {
       ...this.getState(),
       credentials: structuredClone(credentials),
@@ -260,18 +272,26 @@ export class AppStateStore {
     const persistable: PersistedState = {
       ...state,
       spaces: state.spaces.filter((space) => space.kind === "persistent"),
-      tabs: state.tabs.filter((tab) => state.spaces.some((space) => space.id === tab.spaceId && space.kind === "persistent")),
-      bookmarks: state.bookmarks.filter((bookmark) => state.spaces.some((space) => space.id === bookmark.spaceId && space.kind === "persistent")),
-      sites: state.sites.filter((site) => state.spaces.some((space) => space.id === site.spaceId && space.kind === "persistent")),
+      tabs: state.tabs.filter((tab) =>
+        state.spaces.some((space) => space.id === tab.spaceId && space.kind === "persistent"),
+      ),
+      bookmarks: state.bookmarks.filter((bookmark) =>
+        state.spaces.some((space) => space.id === bookmark.spaceId && space.kind === "persistent"),
+      ),
+      sites: state.sites.filter((site) =>
+        state.spaces.some((space) => space.id === site.spaceId && space.kind === "persistent"),
+      ),
     };
     const temporaryPath = `${this.filePath}.tmp`;
-    this.writeChain = this.writeChain.then(async () => {
-      await mkdir(path.dirname(this.filePath), { recursive: true });
-      await writeFile(temporaryPath, JSON.stringify(persistable, null, 2), "utf8");
-      await rename(temporaryPath, this.filePath);
-    }).catch((error: unknown) => {
-      console.error("[state] unable to persist app state", error);
-    });
+    this.writeChain = this.writeChain
+      .then(async () => {
+        await mkdir(path.dirname(this.filePath), { recursive: true });
+        await writeFile(temporaryPath, JSON.stringify(persistable, null, 2), "utf8");
+        await rename(temporaryPath, this.filePath);
+      })
+      .catch((error: unknown) => {
+        console.error("[state] unable to persist app state", error);
+      });
     await this.writeChain;
   }
 }
