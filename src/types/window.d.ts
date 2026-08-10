@@ -1,5 +1,6 @@
 export {};
 
+import type { AgentAPI } from "../shared/agent-contracts";
 import type { BrowserAPI } from "../shared/contracts";
 
 declare global {
@@ -11,5 +12,6 @@ declare global {
       isMaximized: () => Promise<boolean>;
     };
     browserAPI: BrowserAPI;
+    agentAPI: AgentAPI;
   }
 }
