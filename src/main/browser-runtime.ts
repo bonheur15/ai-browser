@@ -31,6 +31,25 @@ type PendingCandidate = LoginCandidate & {
 
 const DEFAULT_URL = "about:blank";
 const GOOGLE_SEARCH = "https://www.google.com/search?q=";
+const NEW_TAB_DOCUMENT = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="color-scheme" content="dark">
+    <title>New tab</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body { width: 100%; height: 100%; margin: 0; }
+      body { display: grid; place-items: center; overflow: hidden; color: #7d8996; background: radial-gradient(circle at 50% 42%, rgba(155, 231, 196, .08), transparent 24%), #10151a; font: 12px system-ui, sans-serif; }
+      main { display: grid; justify-items: center; gap: 8px; opacity: .9; }
+      .mark { display: grid; width: 48px; height: 48px; place-items: center; margin-bottom: 6px; border: 1px solid rgba(155, 231, 196, .2); border-radius: 16px; color: #9be7c4; background: rgba(155, 231, 196, .08); font-size: 22px; }
+      strong { color: #d1dcdf; font-size: 13px; font-weight: 600; }
+      small { color: #7d8996; font-size: 11px; }
+    </style>
+  </head>
+  <body><main><span class="mark">✦</span><strong>A quiet place to start</strong><small>Search or enter a URL above</small></main></body>
+</html>`;
+const NEW_TAB_URL = `data:text/html;charset=utf-8,${encodeURIComponent(NEW_TAB_DOCUMENT)}`;
 
 const isHttpUrl = (value: string): boolean => {
   try {
@@ -124,8 +143,15 @@ export class BrowserRuntime {
     if (!isLoginCandidate(candidate)) return;
     const tab = this.findTabByWebContents(sender);
     if (!tab) return;
+    const senderOrigin = originFor(sender.getURL());
+    if (!senderOrigin || candidate.origin !== senderOrigin) return;
     const space = this.getSpace(tab.spaceId);
-    if (!space || space.kind === "private" || !this.vault.available) return;
+    if (!space || space.kind === "private") return;
+    console.log(`[credentials] login candidate received for ${candidate.hostname}`);
+    if (!this.vault.available) {
+      this.emit({ type: "toast", tone: "error", message: "Password saving is unavailable because secure OS storage is not available" });
+      return;
+    }
     const site = this.findSite(space.id, candidate.origin);
     if (site?.neverSaveCredentials) return;
 
@@ -242,7 +268,7 @@ export class BrowserRuntime {
         this.requireView(command.tabId).webContents.reload();
         return;
       case "navigation.search":
-        this.requireView(command.tabId).webContents.loadURL(navigationUrl(command.input));
+        this.loadTabURL(this.requireView(command.tabId), navigationUrl(command.input));
         return;
       case "bookmark.create":
         this.createBookmark(command.tabId);
@@ -292,9 +318,11 @@ export class BrowserRuntime {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        session: this.sessions.get(space),
         preload: path.join(__dirname, "browser-preload.js"),
       },
     });
+    view.setBackgroundColor("#10151a");
     this.views.set(tab.id, view);
 
     view.webContents.setWindowOpenHandler(({ url }) => {
@@ -304,7 +332,7 @@ export class BrowserRuntime {
       return { action: "deny" };
     });
     view.webContents.on("did-finish-load", () => {
-      console.log(`[browser] loaded ${view.webContents.getURL()}`);
+      console.log(`[browser] loaded ${tab.url === DEFAULT_URL ? "new tab" : view.webContents.getURL()}`);
     });
     view.webContents.on("preload-error", (_event, preloadPath, error) => {
       console.error(`[browser] preload failed ${preloadPath}`, error);
@@ -337,7 +365,7 @@ export class BrowserRuntime {
       }
     });
 
-    void view.webContents.loadURL(tab.url).catch((error: unknown) => {
+    this.loadTabURL(view, tab.url).catch((error: unknown) => {
       console.error(`[browser] unable to load tab ${tab.id}`, error);
     });
     return view;
@@ -520,6 +548,11 @@ export class BrowserRuntime {
 
   private async handleNavigation(tabId: string, url: string): Promise<void> {
     const tab = this.requireTab(tabId);
+    if (url === NEW_TAB_URL) {
+      this.state.updateTab(tabId, { url: DEFAULT_URL, title: "New tab", status: "loaded", lastActiveAt: new Date().toISOString() });
+      this.publish();
+      return;
+    }
     const origin = originFor(url);
     this.state.updateTab(tabId, { url, title: hostnameFor(url), status: "loaded", lastActiveAt: new Date().toISOString() });
     if (origin && tab.spaceId) {
@@ -537,6 +570,10 @@ export class BrowserRuntime {
     if (!tab || tab.status === "hibernated") return;
     this.state.updateTab(tabId, { status });
     this.publish();
+  }
+
+  private loadTabURL(view: WebContentsView, url: string): Promise<void> {
+    return view.webContents.loadURL(url === DEFAULT_URL ? NEW_TAB_URL : url);
   }
 
   private newSite(spaceId: string, origin: string, inspected: { cookieCount: number; storagePresent: boolean }): SiteRecord {
