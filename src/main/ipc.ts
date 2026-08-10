@@ -44,6 +44,9 @@ export const registerBrowserIPC = (window: BaseWindow, runtime: BrowserRuntime):
   ipcMain.on("browser:set-viewport", (_event, bounds: unknown) => {
     if (isViewport(bounds)) runtime.setViewport(bounds);
   });
+  ipcMain.on("browser:set-chrome-overlay", (_event, active: unknown) => {
+    if (typeof active === "boolean") runtime.setChromeOverlayActive(active);
+  });
   ipcMain.on("browser:login-candidate", (event, candidate: unknown) => {
     runtime.handleLoginCandidate(event.sender, candidate);
   });
@@ -58,6 +61,7 @@ export const registerBrowserIPC = (window: BaseWindow, runtime: BrowserRuntime):
     ipcMain.removeHandler("browser:get-snapshot");
     ipcMain.removeHandler("browser:dispatch");
     ipcMain.removeAllListeners("browser:set-viewport");
+    ipcMain.removeAllListeners("browser:set-chrome-overlay");
     ipcMain.removeAllListeners("browser:login-candidate");
     ipcMain.removeAllListeners("browser:credential-fill-result");
     ipcMain.removeAllListeners("browser:agent-page-response");
