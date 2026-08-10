@@ -89,6 +89,7 @@ const createWindow = async (): Promise<void> => {
     initializedStateStore,
     new SpaceSessionManager(),
     initializedSecretVault,
+    chrome,
     (event) => {
       if (!chrome.webContents.isDestroyed()) chrome.webContents.send("browser:event", event);
     },
