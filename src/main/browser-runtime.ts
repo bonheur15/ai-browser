@@ -22,6 +22,7 @@ import type {
   StoredCredential,
   Tab,
 } from "../shared/contracts";
+import { DEFAULT_APPEARANCE, isAppearanceSettings } from "../shared/settings";
 import { AgentTabLocks } from "./agent-tab-locks";
 import {
   DEFAULT_URL,
@@ -33,7 +34,6 @@ import {
 import type { SecretVault } from "./secret-vault";
 import type { SpaceSessionManager } from "./space-session-manager";
 import type { AppStateStore } from "./state-store";
-import { DEFAULT_APPEARANCE, isAppearanceSettings } from "../shared/settings";
 
 type LoginCandidate = {
   origin: string;
@@ -109,6 +109,7 @@ export class BrowserRuntime {
   private readonly agentLocks: AgentTabLocks;
   private readonly certificateErrors = new Set<string>();
   private attachedTabId: string | null = null;
+  private chromeOverlayActive = false;
   private viewport: BrowserViewportBounds = { x: 92, y: 154, width: 1120, height: 600 };
   private runtimeStatusTimer: NodeJS.Timeout | null = null;
 
@@ -117,11 +118,10 @@ export class BrowserRuntime {
     private readonly state: AppStateStore,
     private readonly sessions: SpaceSessionManager,
     private readonly vault: SecretVault,
+    private readonly chrome: WebContentsView,
     private readonly emit: (event: BrowserEvent) => void,
   ) {
-    this.agentLocks = new AgentTabLocks((tabId, locked) => {
-      void this.setViewInteractionLocked(tabId, locked);
-    });
+    this.agentLocks = new AgentTabLocks();
   }
 
   async initialize(): Promise<void> {
@@ -198,22 +198,14 @@ export class BrowserRuntime {
     this.publish();
   }
 
-  private async setViewInteractionLocked(tabId: string, locked: boolean): Promise<void> {
-    const view = this.views.get(tabId);
-    if (!view || view.webContents.isDestroyed()) return;
-    const value = locked ? "none" : "auto";
-    try {
-      await view.webContents.executeJavaScript(
-        `document.documentElement.style.pointerEvents = ${JSON.stringify(value)}; document.body && (document.body.style.pointerEvents = ${JSON.stringify(value)});`,
-        true,
-      );
-    } catch {
-      // A page can be between navigations; the next load event reapplies the lock.
-    }
-  }
-
   releaseAgentTabLocks(threadId: string): void {
     this.agentLocks.release(threadId);
+    this.publish();
+  }
+
+  releaseAllAgentTabLocks(): void {
+    this.agentLocks.releaseAll();
+    this.publish();
   }
 
   setViewport(bounds: BrowserViewportBounds): void {
@@ -224,6 +216,12 @@ export class BrowserRuntime {
       height: Math.max(1, Math.round(bounds.height)),
     };
     this.resizeAttachedView();
+  }
+
+  setChromeOverlayActive(active: boolean): void {
+    if (this.chromeOverlayActive === active) return;
+    this.chromeOverlayActive = active;
+    this.restackAttachedView();
   }
 
   getAgentTab(tabId: string): Tab {
@@ -606,7 +604,8 @@ export class BrowserRuntime {
         await this.removeCredential(command.credentialId);
         return;
       case "settings.updateAppearance":
-        if (!isAppearanceSettings(command.appearance)) throw new Error("Invalid appearance settings");
+        if (!isAppearanceSettings(command.appearance))
+          throw new Error("Invalid appearance settings");
         this.state.update((current) => {
           current.settings.appearance = { ...command.appearance };
         });
@@ -625,6 +624,7 @@ export class BrowserRuntime {
 
     const view = new WebContentsView({
       webPreferences: {
+        backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -633,6 +633,7 @@ export class BrowserRuntime {
       },
     });
     view.setBackgroundColor("#10151a");
+    view.webContents.setBackgroundThrottling(false);
     this.views.set(tab.id, view);
 
     view.webContents.setWindowOpenHandler(({ url }) => {
@@ -644,7 +645,6 @@ export class BrowserRuntime {
       return { action: "deny" };
     });
     view.webContents.on("did-finish-load", () => {
-      if (this.agentLocks.has(tab.id)) void this.setViewInteractionLocked(tab.id, true);
       console.log(
         `[browser] loaded ${tab.url === DEFAULT_URL ? "new tab" : view.webContents.getURL()}`,
       );
@@ -1006,12 +1006,22 @@ export class BrowserRuntime {
       const previous = this.views.get(this.attachedTabId);
       if (previous) this.window.contentView.removeChildView(previous);
     }
-    // Keep native page surfaces below the full-size chrome WebContentsView.
-    this.window.contentView.removeChildView(next);
-    this.window.contentView.addChildView(next, 0);
+    // The page owns its viewport and must sit above the transparent chrome view so
+    // native pointer, wheel, and keyboard input reaches the website.
+    this.window.contentView.addChildView(next);
     this.attachedTabId = tabId;
     this.resizeAttachedView();
+    this.restackAttachedView();
     this.publishRuntimeStatus();
+  }
+
+  private restackAttachedView(): void {
+    const page = this.attachedTabId ? this.views.get(this.attachedTabId) : undefined;
+    if (this.chromeOverlayActive || !page) {
+      this.window.contentView.addChildView(this.chrome);
+      return;
+    }
+    this.window.contentView.addChildView(page);
   }
 
   private resizeAttachedView(): void {
