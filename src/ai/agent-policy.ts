@@ -1,5 +1,5 @@
-import type { AppSnapshot, Space, Tab } from "../shared/contracts";
 import type { AgentActionClass, AgentMode, AgentPolicy } from "../shared/agent-contracts";
+import type { AppSnapshot, Space, Tab } from "../shared/contracts";
 import { allAgentActions, defaultAgentPolicy, normalizePolicy } from "./agent-state-store";
 
 export type PolicyTarget = {
@@ -8,9 +8,7 @@ export type PolicyTarget = {
   url?: string;
 };
 
-export type PolicyDecision =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+export type PolicyDecision = { allowed: true } | { allowed: false; reason: string };
 
 export const isAgentMode = (value: unknown): value is AgentMode =>
   value === "full" || value === "guided" || value === "observe";
@@ -50,7 +48,10 @@ export class AgentPolicyEngine {
     }
 
     if (normalized.mode === "observe" && action !== "read") {
-      return { allowed: false, reason: "Observe mode only permits reading page context and screenshots" };
+      return {
+        allowed: false,
+        reason: "Observe mode only permits reading page context and screenshots",
+      };
     }
 
     const space = target.space ?? (target.tab ? this.findSpace(target.tab.spaceId) : undefined);
@@ -63,7 +64,11 @@ export class AgentPolicyEngine {
       }
     }
 
-    if (target.tab && normalized.allowedTabIds && !normalized.allowedTabIds.includes(target.tab.id)) {
+    if (
+      target.tab &&
+      normalized.allowedTabIds &&
+      !normalized.allowedTabIds.includes(target.tab.id)
+    ) {
       return { allowed: false, reason: "This tab is outside the thread's tab scope" };
     }
 
@@ -75,12 +80,10 @@ export class AgentPolicyEngine {
   }
 
   requiresApproval(policy: AgentPolicy, action: AgentActionClass): boolean {
-    return policy.mode === "guided" && [
-      "credential-fill",
-      "form-submit",
-      "external-side-effect",
-      "destructive",
-    ].includes(action);
+    return (
+      policy.mode === "guided" &&
+      ["credential-fill", "form-submit", "external-side-effect", "destructive"].includes(action)
+    );
   }
 
   originAllowed(allowedOrigins: string[] | null, value: string): boolean {
@@ -99,7 +102,8 @@ export class AgentPolicyEngine {
     return allowedOrigins.some((candidate) => {
       const normalized = candidate.trim().replace(/\/$/, "");
       if (!normalized) return false;
-      if (normalized.startsWith("*.")) return hostname === normalized.slice(2) || hostname.endsWith(`.${normalized.slice(2)}`);
+      if (normalized.startsWith("*."))
+        return hostname === normalized.slice(2) || hostname.endsWith(`.${normalized.slice(2)}`);
       if (normalized.includes("://")) return origin === normalized;
       return hostname === normalized;
     });
@@ -108,7 +112,8 @@ export class AgentPolicyEngine {
   canCreateTab(policy: AgentPolicy, space: Space): PolicyDecision {
     const snapshot = this.getBrowserSnapshot();
     const count = snapshot.tabs.length;
-    if (count >= policy.maxTabs) return { allowed: false, reason: `This thread allows at most ${policy.maxTabs} tabs` };
+    if (count >= policy.maxTabs)
+      return { allowed: false, reason: `This thread allows at most ${policy.maxTabs} tabs` };
     return this.decide(policy, "tab-management", { space });
   }
 
