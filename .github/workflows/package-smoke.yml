@@ -58,6 +58,9 @@ jobs:
         run: npm run ${{ matrix.command }} -- --x64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Smoke test packaged Linux app
+        if: matrix.platform == 'linux'
+        run: npm run smoke:package:linux
       - name: Upload manually requested packages
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
