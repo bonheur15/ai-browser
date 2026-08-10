@@ -9,6 +9,13 @@ import type {
   SpaceScope,
   Tab,
 } from "../shared/contracts";
+import type {
+  AgentCommand,
+  AgentEvent,
+  AgentMode,
+  AgentPolicy,
+  AgentSnapshot,
+} from "../shared/agent-contracts";
 import "./styles.css";
 
 const emptySnapshot: AppSnapshot = {
@@ -23,6 +30,26 @@ const emptySnapshot: AppSnapshot = {
   drawer: null,
   selectedSiteId: null,
   vaultAvailable: false,
+};
+
+const emptyAgentSnapshot: AgentSnapshot = {
+  connection: { status: "stopped" },
+  threads: [],
+  activeThreadId: null,
+  messages: [],
+  actions: [],
+  approvalRequests: [],
+  modelOptions: [],
+  globalDefaults: {
+    mode: "full",
+    allowedSpaceIds: null,
+    allowedTabIds: null,
+    allowedOrigins: null,
+    allowedActions: ["read", "navigate", "tab-management", "page-interaction", "credential-fill", "form-submit", "external-side-effect", "destructive"],
+    allowVault: true,
+    allowPrivate: false,
+    maxTabs: 24,
+  },
 };
 
 const iconFor = (icon: string): string => ({
@@ -160,6 +187,8 @@ function CommandDock({
   onDispatch,
   onOpenVault,
   onOpenSite,
+  agentOpen,
+  onToggleAgent,
   onToggleMaximize,
 }: {
   snapshot: AppSnapshot;
@@ -169,6 +198,8 @@ function CommandDock({
   onDispatch: (command: BrowserCommand) => void;
   onOpenVault: () => void;
   onOpenSite: () => void;
+  agentOpen: boolean;
+  onToggleAgent: () => void;
   onToggleMaximize: () => void;
 }) {
   const [input, setInput] = useState(activeTab?.url ?? "");
@@ -223,6 +254,7 @@ function CommandDock({
         <span className="command-hint">⌘ L</span>
       </form>
       <div className="dock-actions">
+        <IconButton label={agentOpen ? "Close Agent" : "Open Agent"} onClick={onToggleAgent} active={agentOpen}><span>✧</span></IconButton>
         <IconButton label="Open Vault" onClick={onOpenVault} active={snapshot.drawer === "vault"}><span>◒</span></IconButton>
         <IconButton label="Inspect this site" onClick={onOpenSite} disabled={!activeTab} active={snapshot.drawer === "site"}><span>⌾</span></IconButton>
         <IconButton label="Bookmark this page" onClick={() => onDispatch({ type: "bookmark.create", tabId: activeTab?.id })} disabled={!activeTab}><span>✦</span></IconButton>
@@ -319,10 +351,132 @@ function PromptCard({ request, spaceName, onDispatch }: { request: CredentialSav
   );
 }
 
+function AgentDock({
+  snapshot,
+  browserSnapshot,
+  onDispatch,
+  onClose,
+  onActivateTab,
+}: {
+  snapshot: AgentSnapshot;
+  browserSnapshot: AppSnapshot;
+  onDispatch: (command: AgentCommand) => void;
+  onClose: () => void;
+  onActivateTab: (tabId: string) => void;
+}) {
+  const [input, setInput] = useState("");
+  const [originInput, setOriginInput] = useState("");
+  const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.activeThreadId);
+  const policy = thread?.policy ?? snapshot.globalDefaults;
+  const spaceMap = new Map(browserSnapshot.spaces.map((space) => [space.id, space]));
+  const tabMap = new Map(browserSnapshot.tabs.map((tab) => [tab.id, tab]));
+  const activeBrowserTab = browserSnapshot.tabs.find((tab) => tab.id === browserSnapshot.activeTabId);
+  const isRunning = thread?.status === "running" || thread?.status === "starting" || thread?.status === "waiting-for-approval";
+  const statusLabel = snapshot.connection.status === "ready"
+    ? thread?.status.replace(/-/g, " ") ?? "ready"
+    : snapshot.connection.status;
+
+  useEffect(() => {
+    setOriginInput("");
+  }, [thread?.id]);
+
+  const updatePolicy = (update: Partial<AgentPolicy>): void => {
+    if (!thread) return;
+    onDispatch({ type: "agent.policy.update", threadId: thread.id, policy: { ...policy, ...update } });
+  };
+
+  const toggleSpace = (spaceId: string): void => {
+    const next = policy.allowedSpaceIds === null
+      ? [spaceId]
+      : policy.allowedSpaceIds.includes(spaceId)
+        ? policy.allowedSpaceIds.filter((id) => id !== spaceId)
+        : [...policy.allowedSpaceIds, spaceId];
+    updatePolicy({ allowedSpaceIds: next });
+  };
+
+  const addOrigin = (event: FormEvent): void => {
+    event.preventDefault();
+    const origin = originInput.trim().replace(/\/$/, "");
+    if (!origin || !thread) return;
+    updatePolicy({ allowedOrigins: policy.allowedOrigins ? [...new Set([...policy.allowedOrigins, origin])] : [origin] });
+    setOriginInput("");
+  };
+
+  const send = (): void => {
+    if (!thread || !input.trim()) return;
+    onDispatch({ type: "agent.message.send", threadId: thread.id, text: input.trim() });
+    setInput("");
+  };
+
+  const createThread = (): void => onDispatch({ type: "agent.thread.create" });
+
+  return (
+    <aside className="agent-dock" aria-label="Agent workspace">
+      <div className="agent-header">
+        <div>
+          <span className="eyebrow">AGENT WORKSPACE</span>
+          <h2>Let the browser move.</h2>
+        </div>
+        <div className="agent-header-actions">
+          <span className={`agent-status-dot agent-status-${snapshot.connection.status}`} title={"message" in snapshot.connection ? snapshot.connection.message ?? statusLabel : statusLabel} />
+          <IconButton label="Close Agent" onClick={onClose}><span>×</span></IconButton>
+        </div>
+      </div>
+
+      <div className="agent-toolbar">
+        <button className="agent-new-thread" type="button" onClick={createThread}><span>+</span> New thread</button>
+        <span className="agent-sharing"><i /> Page context on</span>
+      </div>
+
+      <div className="agent-thread-strip" aria-label="Agent threads">
+        {snapshot.threads.slice(0, 6).map((candidate) => <button className={`agent-thread-chip${candidate.id === thread?.id ? " is-active" : ""}`} key={candidate.id} type="button" onClick={() => onDispatch({ type: "agent.thread.select", threadId: candidate.id })}><span>{candidate.status === "running" ? "◌" : "·"}</span>{candidate.title}</button>)}
+      </div>
+
+      {!thread ? (
+        <div className="agent-empty"><span className="agent-empty-mark">✧</span><strong>Start a browser thread</strong><p>Give the agent a task and it can work across the Spaces you choose.</p><button type="button" onClick={createThread}>Create thread <span>↗</span></button></div>
+      ) : (
+        <>
+          <div className="agent-controls">
+            <label className="agent-select-label"><span>MODEL</span><select value={thread.model} onChange={(event) => onDispatch({ type: "agent.model.update", threadId: thread.id, model: event.target.value, reasoningEffort: thread.reasoningEffort })} disabled={snapshot.modelOptions.length === 0}><option value={thread.model}>{thread.model}</option>{snapshot.modelOptions.filter((model) => model.id !== thread.model).map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}</select></label>
+            <label className="agent-select-label"><span>MODE</span><select value={policy.mode} onChange={(event) => updatePolicy({ mode: event.target.value as AgentMode })}><option value="full">Full takeover</option><option value="guided">Guided</option><option value="observe">Observe</option></select></label>
+            <div className="agent-run-actions"><span className="agent-run-state">{statusLabel}</span>{isRunning ? <><button type="button" onClick={() => onDispatch({ type: "agent.run.pause", threadId: thread.id })} title="Pause agent">Ⅱ</button><button className="agent-stop" type="button" onClick={() => onDispatch({ type: "agent.run.stop", threadId: thread.id })} title="Stop agent">■</button></> : thread.status === "paused" ? <button type="button" onClick={() => onDispatch({ type: "agent.run.resume", threadId: thread.id })} title="Resume agent">▶</button> : null}</div>
+          </div>
+
+          <details className="agent-settings">
+            <summary><span>Workspace permissions</span><small>{policy.allowedSpaceIds === null ? "Open workspace" : `${policy.allowedSpaceIds.length} Space${policy.allowedSpaceIds.length === 1 ? "" : "s"}`}</small></summary>
+            <div className="agent-settings-body">
+              <div className="agent-setting-row"><span>Spaces</span><button className={policy.allowedSpaceIds === null ? "is-selected" : ""} type="button" onClick={() => updatePolicy({ allowedSpaceIds: null })}>All persistent</button></div>
+              <div className="agent-space-toggles">{browserSnapshot.spaces.map((space) => <button key={space.id} type="button" className={policy.allowedSpaceIds?.includes(space.id) ? "is-selected" : ""} onClick={() => toggleSpace(space.id)}><i style={{ "--space-color": space.color } as React.CSSProperties} />{space.name}</button>)}</div>
+              <div className="agent-setting-row"><span>Vault fills</span><button className={policy.allowVault ? "is-selected" : ""} type="button" onClick={() => updatePolicy({ allowVault: !policy.allowVault })}>{policy.allowVault ? "Allowed" : "Blocked"}</button></div>
+              <div className="agent-setting-row"><span>Tab limit</span><select value={policy.maxTabs} onChange={(event) => updatePolicy({ maxTabs: Number(event.target.value) })}><option value="4">4 tabs</option><option value="8">8 tabs</option><option value="16">16 tabs</option><option value="24">24 tabs</option><option value="48">48 tabs</option></select></div>
+              <form className="agent-origin-form" onSubmit={addOrigin}><input value={originInput} onChange={(event) => setOriginInput(event.target.value)} placeholder="Limit to an origin" aria-label="Add allowed origin" /><button type="submit">Add</button></form>
+              {policy.allowedOrigins && policy.allowedOrigins.length > 0 && <div className="agent-origin-list">{policy.allowedOrigins.map((origin) => <button key={origin} type="button" onClick={() => updatePolicy({ allowedOrigins: policy.allowedOrigins?.filter((candidate) => candidate !== origin) ?? null })}>{origin} ×</button>)}</div>}
+            </div>
+          </details>
+
+          <div className="agent-target-card"><span className="agent-target-icon">◉</span><div><span>VISIBLE TARGET</span><strong>{activeBrowserTab?.title || "No active tab"}</strong><small>{activeBrowserTab ? `${spaceMap.get(activeBrowserTab.spaceId)?.name ?? "Space"} · ${activeBrowserTab.url}` : "The agent will choose a tab when needed."}</small></div></div>
+
+          <div className="agent-conversation" aria-live="polite">
+            {snapshot.messages.length === 0 && <div className="agent-suggestion"><span>Try</span><p>“Open a new tab in Personal and search for a quiet place to work.”</p></div>}
+            {snapshot.messages.map((message) => <div className={`agent-message agent-message-${message.role}`} key={message.id}><span className="agent-message-mark">{message.role === "user" ? "You" : message.role === "assistant" ? "AI" : "·"}</span><p>{message.text || "…"}</p></div>)}
+            {snapshot.approvalRequests.map((request) => <div className="agent-approval" key={request.id}><span className="eyebrow">YOUR APPROVAL</span><strong>{request.summary}</strong><small>{request.actionClass.replace(/-/g, " ")}{request.tabId && tabMap.get(request.tabId) ? ` · ${tabMap.get(request.tabId)?.title}` : ""}</small><div><button type="button" onClick={() => onDispatch({ type: "agent.approval.respond", threadId: request.threadId, approvalId: request.id, approved: true })}>Allow once</button><button type="button" onClick={() => onDispatch({ type: "agent.approval.respond", threadId: request.threadId, approvalId: request.id, approved: false })}>Deny</button></div></div>)}
+          </div>
+
+          {snapshot.actions.length > 0 && <div className="agent-trace"><div className="agent-trace-heading"><span>LIVE TRACE</span><small>{snapshot.actions.length} actions</small></div>{snapshot.actions.slice(-5).map((action) => <button type="button" className="agent-trace-row" key={action.id} onClick={() => action.tabId && onActivateTab(action.tabId)}><i className={`trace-status trace-${action.status}`} /><span>{action.summary}</span><small>{action.status}</small></button>)}</div>}
+
+          <form className="agent-composer" onSubmit={(event) => { event.preventDefault(); send(); }}><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); send(); } }} placeholder={policy.mode === "observe" ? "Ask the agent to inspect…" : "Tell the agent what to do…"} aria-label="Message the agent" rows={2} /><button type="submit" disabled={!input.trim() || isRunning}>Send <span>↗</span></button><small>Agent mode is {policy.mode}; page context sharing is on.</small></form>
+        </>
+      )}
+    </aside>
+  );
+}
+
 function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(emptySnapshot);
+  const [agentSnapshot, setAgentSnapshot] = useState<AgentSnapshot>(emptyAgentSnapshot);
   const [maximized, setMaximized] = useState(false);
   const [drawer, setDrawer] = useState<"vault" | "site" | null>(null);
+  const [agentOpen, setAgentOpen] = useState(false);
   const [credentialPrompt, setCredentialPrompt] = useState<Extract<BrowserEvent, { type: "credential-save-request" }> ["request"] | null>(null);
   const [toast, setToast] = useState<{ tone: "info" | "success" | "error"; message: string } | null>(null);
   const [spaceMenuId, setSpaceMenuId] = useState<string | null>(null);
@@ -345,6 +499,16 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const agent = window.agentAPI;
+    if (!agent) return;
+    void agent.getSnapshot().then(setAgentSnapshot);
+    return agent.subscribe((event: AgentEvent) => {
+      if (event.type === "agent.snapshot") setAgentSnapshot(event.snapshot);
+      if (event.type === "agent.connection") setAgentSnapshot((current) => ({ ...current, connection: event.connection }));
+    });
+  }, []);
+
+  useEffect(() => {
     if (window.windowControls) void window.windowControls.isMaximized().then(setMaximized);
   }, []);
 
@@ -359,7 +523,7 @@ function App() {
     observer.observe(element);
     updateBounds();
     return () => observer.disconnect();
-  }, [drawer]);
+  }, [drawer, agentOpen]);
 
   const dispatch = (command: BrowserCommand): void => {
     if (command.type === "credential.reject") setCredentialPrompt(null);
@@ -367,6 +531,14 @@ function App() {
       if (command.type === "credential.save" && result?.ok) setCredentialPrompt(null);
       if (!result.ok) setToast({ tone: "error", message: result.error });
       else setSnapshot(result.snapshot);
+    });
+  };
+
+  const dispatchAgent = (command: AgentCommand): void => {
+    void window.agentAPI?.dispatch(command).then((result) => {
+      if (!result) return;
+      setAgentSnapshot(result.snapshot);
+      if (!result.ok) setToast({ tone: "error", message: result.error });
     });
   };
 
@@ -420,11 +592,12 @@ function App() {
     <main className="app-shell" onClick={() => spaceMenuId && setSpaceMenuId(null)}>
       <div className="canvas">
         <SpaceRail snapshot={snapshot} onScope={selectScope} onCreate={() => setSpaceDialogOpen(true)} onPrivate={() => dispatch({ type: "space.createPrivate" })} onSpaceMenu={(spaceId) => { setSpaceMenuId(spaceId); }} menuSpaceId={spaceMenuId} onRename={renameSpace} onDelete={deleteSpace} />
-        <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} maximized={maximized} onDispatch={dispatch} onOpenVault={() => { setDrawer(drawer === "vault" ? null : "vault"); }} onOpenSite={openSite} onToggleMaximize={() => { window.windowControls?.toggleMaximize(); setMaximized((current) => !current); }} />
+        <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} maximized={maximized} agentOpen={agentOpen} onDispatch={dispatch} onOpenVault={() => { setAgentOpen(false); setDrawer(drawer === "vault" ? null : "vault"); }} onOpenSite={openSite} onToggleAgent={() => { setDrawer(null); setAgentOpen((current) => !current); }} onToggleMaximize={() => { window.windowControls?.toggleMaximize(); setMaximized((current) => !current); }} />
         <TabDeck tabs={visibleTabs} spaces={snapshot.spaces} activeTabId={snapshot.activeTabId} onActivate={(tabId) => tabId ? dispatch({ type: "tab.activate", tabId }) : dispatch({ type: "tab.create" })} onClose={(tabId) => dispatch({ type: "tab.close", tabId })} onHibernate={(tabId) => dispatch({ type: "tab.hibernate", tabId })} onMoveTab={(tabId, spaceId, clone) => dispatch(clone ? { type: "tab.cloneToSpace", tabId, spaceId } : { type: "tab.moveToSpace", tabId, spaceId })} />
-        <div ref={viewportRef} className={`browser-viewport${drawer ? " has-drawer" : ""}`} aria-label="Browser surface"><div className="viewport-fallback"><span className="fallback-orb">✦</span><strong>Choose a surface</strong><small>Open a tab or select a Space to begin.</small></div></div>
+        <div ref={viewportRef} className={`browser-viewport${drawer ? " has-drawer" : ""}${agentOpen ? " has-agent" : ""}`} aria-label="Browser surface"><div className="viewport-fallback"><span className="fallback-orb">✦</span><strong>Choose a surface</strong><small>Open a tab or select a Space to begin.</small></div></div>
         {drawer === "vault" && <VaultDrawer snapshot={snapshot} onDispatch={(command) => { if (command.type === "site.inspect") openSiteFromVault(command.siteId); else dispatch(command); }} onClose={() => setDrawer(null)} />}
         {drawer === "site" && <SiteDrawer snapshot={{ ...snapshot, drawer: "site" }} onDispatch={dispatch} onClose={() => setDrawer(null)} />}
+        {agentOpen && <AgentDock snapshot={agentSnapshot} browserSnapshot={snapshot} onDispatch={dispatchAgent} onClose={() => setAgentOpen(false)} onActivateTab={(tabId) => dispatch({ type: "tab.activate", tabId })} />}
         {credentialPrompt && promptSpace && <PromptCard request={credentialPrompt} spaceName={promptSpace.name} onDispatch={dispatch} />}
         {toast && <div className={`toast toast-${toast.tone}`} role="status"><span>{toast.tone === "error" ? "!" : "✓"}</span>{toast.message}</div>}
       </div>
