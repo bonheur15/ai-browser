@@ -44,3 +44,24 @@ test("agent tab locks release by thread without persisting state", () => {
     { tabId: "tab-1", locked: false },
   ]);
 });
+
+test("agent tab locks preserve the current owner and can be cleared globally", () => {
+  const interactionChanges = [];
+  const locks = new AgentTabLocks((tabId, locked) => interactionChanges.push({ tabId, locked }));
+
+  locks.set("tab-1", "thread-1", true);
+  locks.set("tab-1", "thread-2", true);
+  locks.set("tab-1", "thread-1", false);
+  assert.deepEqual(locks.get("tab-1"), { threadId: "thread-2" });
+
+  locks.set("tab-2", "thread-2", true);
+  locks.releaseAll();
+  assert.equal(locks.get("tab-1"), undefined);
+  assert.equal(locks.get("tab-2"), undefined);
+  assert.deepEqual(interactionChanges, [
+    { tabId: "tab-1", locked: true },
+    { tabId: "tab-2", locked: true },
+    { tabId: "tab-1", locked: false },
+    { tabId: "tab-2", locked: false },
+  ]);
+});
