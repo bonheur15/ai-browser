@@ -129,3 +129,21 @@ test("policy engine enforces modes, Spaces, origins, and approvals", () => {
   assert.equal(engine.requiresApproval({ ...full, mode: "full" }, "form-submit"), false);
   assert.equal(engine.canCreateTab({ ...full, maxTabs: 1 }, personal).allowed, false);
 });
+
+test("global Agent defaults only affect threads created after the update", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ai-browser-agent-defaults-"));
+  try {
+    const store = new AgentStateStore(path.join(directory, "agent-state.json"));
+    await store.load();
+    store.updateGlobalDefaults({ ...defaultAgentPolicy(), mode: "guided" });
+    const existing = store.createThread({ title: "Existing" });
+    store.updateGlobalDefaults({ ...defaultAgentPolicy(), mode: "observe" });
+    const next = store.createThread({ title: "Next" });
+
+    assert.equal(existing.policy.mode, "guided");
+    assert.equal(next.policy.mode, "observe");
+    assert.equal(store.getThread(existing.id).policy.mode, "guided");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
