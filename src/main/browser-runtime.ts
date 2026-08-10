@@ -31,6 +31,12 @@ type PendingCandidate = LoginCandidate & {
   timeout: NodeJS.Timeout;
 };
 
+type ScreenshotContext = {
+  snapshotId: string;
+  scaleX: number;
+  scaleY: number;
+};
+
 const DEFAULT_URL = "about:blank";
 const GOOGLE_SEARCH = "https://www.google.com/search?q=";
 const NEW_TAB_DOCUMENT = `<!doctype html>
@@ -90,6 +96,7 @@ export class BrowserRuntime {
   private readonly views = new Map<string, WebContentsView>();
   private readonly pendingCandidates = new Map<string, PendingCandidate>();
   private readonly pendingPageRequests = new Map<string, { senderId: number; resolve: (response: BrowserPageResponse) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  private readonly screenshotContexts = new Map<string, ScreenshotContext>();
   private readonly pendingFillResults = new Map<string, { senderId: number; resolve: (ok: boolean) => void; timer: NodeJS.Timeout }>();
   private attachedTabId: string | null = null;
   private viewport: BrowserViewportBounds = { x: 92, y: 154, width: 1120, height: 600 };
@@ -187,6 +194,20 @@ export class BrowserRuntime {
     await this.activateTab(tabId);
     const view = this.requireView(tabId);
     const requestId = randomUUID();
+    if (request.type === "click" && !request.ref && typeof request.x === "number" && typeof request.y === "number") {
+      const screenshotContext = this.screenshotContexts.get(tabId);
+      if (screenshotContext?.snapshotId !== request.snapshotId) {
+        return { requestId, ok: false, error: "Coordinate clicks require a recent screenshot context" };
+      }
+      this.screenshotContexts.delete(tabId);
+      const x = Math.round(request.x * screenshotContext.scaleX);
+      const y = Math.round(request.y * screenshotContext.scaleY);
+      view.webContents.focus();
+      view.webContents.sendInputEvent({ type: "mouseMove", x, y });
+      view.webContents.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
+      view.webContents.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+      return { requestId, ok: true, result: { coordinate: { x: request.x, y: request.y }, nativeCoordinate: { x, y }, input: "native-mouse" } };
+    }
     const pageRequest = { ...request, requestId } as BrowserPageRequest;
     return new Promise<BrowserPageResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -201,6 +222,8 @@ export class BrowserRuntime {
   async agentPageContext(tabId: string): Promise<BrowserPageContext> {
     const response = await this.agentPageRequest(tabId, { type: "context" });
     if (!response.ok || !response.context) throw new Error(response.error ?? "Unable to read the page context");
+    const screenshotContext = this.screenshotContexts.get(tabId);
+    if (screenshotContext) this.screenshotContexts.set(tabId, { ...screenshotContext, snapshotId: response.context.snapshotId });
     return response.context;
   }
 
@@ -212,6 +235,12 @@ export class BrowserRuntime {
       const image = await this.requireView(tabId).webContents.capturePage();
       const size = image.getSize();
       const resized = size.width > 1280 ? image.resize({ width: 1280 }) : image;
+      const outputSize = resized.getSize();
+      this.screenshotContexts.set(tabId, {
+        snapshotId: context.snapshotId,
+        scaleX: size.width / outputSize.width,
+        scaleY: size.height / outputSize.height,
+      });
       return { dataUrl: resized.toDataURL(), url: context.url, title: context.title };
     } finally {
       try {
