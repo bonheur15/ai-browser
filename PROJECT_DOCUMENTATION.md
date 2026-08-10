@@ -48,7 +48,7 @@ The project deliberately does not yet provide shell access, filesystem access, a
 | Evidence thumbnails | Implemented, with gaps | Screenshots are downscaled and retained per thread; pin/delete and disk quotas are missing. |
 | Browser fixture tests | Missing | There are no local HTTP fixture workflows for login, forms, prompt injection, or redaction. |
 | Electron end-to-end tests | Missing | Current tests do not launch a real BrowserWindow and drive real WebContentsViews. |
-| Packaging/distribution | Missing | No installer, signing, auto-update, release pipeline, or platform packaging configuration exists. |
+| Packaging/distribution | Implemented foundation | GitHub Actions and electron-builder create Windows, macOS, and Linux packages with checksums, SBOM, provenance, and changelog automation. Signing requires repository secrets; auto-update and store publishing are not implemented. |
 
 ## 3. Design principles and non-goals
 
