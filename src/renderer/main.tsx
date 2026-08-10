@@ -351,6 +351,18 @@ function PromptCard({ request, spaceName, onDispatch }: { request: CredentialSav
   );
 }
 
+function EvidencePreview({ id }: { id: string }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void window.agentAPI?.getEvidence(id).then((evidence) => {
+      if (active) setDataUrl(evidence?.dataUrl ?? null);
+    });
+    return () => { active = false; };
+  }, [id]);
+  return dataUrl ? <img className="agent-evidence-thumb" src={dataUrl} alt="Agent screenshot evidence" /> : <span className="agent-evidence-loading">evidence</span>;
+}
+
 function AgentDock({
   snapshot,
   browserSnapshot,
@@ -458,7 +470,7 @@ function AgentDock({
 
           <div className="agent-conversation" aria-live="polite">
             {snapshot.messages.length === 0 && <div className="agent-suggestion"><span>Try</span><p>“Open a new tab in Personal and search for a quiet place to work.”</p></div>}
-            {snapshot.messages.map((message) => <div className={`agent-message agent-message-${message.role}`} key={message.id}><span className="agent-message-mark">{message.role === "user" ? "You" : message.role === "assistant" ? "AI" : "·"}</span><p>{message.text || "…"}</p></div>)}
+            {snapshot.messages.map((message) => <div className={`agent-message agent-message-${message.role}`} key={message.id}><span className="agent-message-mark">{message.role === "user" ? "You" : message.role === "assistant" ? "AI" : "·"}</span><div className="agent-message-body"><p>{message.text || "…"}</p>{message.evidenceIds && <div className="agent-evidence-list">{message.evidenceIds.map((id) => <EvidencePreview id={id} key={id} />)}</div>}</div></div>)}
             {snapshot.approvalRequests.map((request) => <div className="agent-approval" key={request.id}><span className="eyebrow">YOUR APPROVAL</span><strong>{request.summary}</strong><small>{request.actionClass.replace(/-/g, " ")}{request.tabId && tabMap.get(request.tabId) ? ` · ${tabMap.get(request.tabId)?.title}` : ""}</small><div><button type="button" onClick={() => onDispatch({ type: "agent.approval.respond", threadId: request.threadId, approvalId: request.id, approved: true })}>Allow once</button><button type="button" onClick={() => onDispatch({ type: "agent.approval.respond", threadId: request.threadId, approvalId: request.id, approved: false })}>Deny</button></div></div>)}
           </div>
 
