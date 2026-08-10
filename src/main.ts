@@ -2,6 +2,9 @@ import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import path from "node:path";
 import { BrowserRuntime } from "./main/browser-runtime";
 import { registerBrowserIPC } from "./main/ipc";
+import { registerAgentIPC } from "./main/agent-ipc";
+import { AgentRuntime } from "./ai/agent-runtime";
+import { AgentStateStore } from "./ai/agent-state-store";
 import { SpaceSessionManager } from "./main/space-session-manager";
 import { SecretVault } from "./main/secret-vault";
 import { AppStateStore } from "./main/state-store";
@@ -10,6 +13,8 @@ let mainWindow: BrowserWindow | null = null;
 let browserRuntime: BrowserRuntime | null = null;
 let stateStore: AppStateStore | null = null;
 let secretVault: SecretVault | null = null;
+let agentStateStore: AgentStateStore | null = null;
+let agentRuntime: AgentRuntime | null = null;
 let isQuitting = false;
 
 const isDevelopment = process.argv.includes("--dev");
@@ -59,6 +64,16 @@ const createWindow = async (): Promise<void> => {
   );
   browserRuntime = runtime;
   registerBrowserIPC(window, runtime);
+  const agents = new AgentRuntime(
+    runtime,
+    agentStateStore!,
+    (event) => {
+      if (!window.isDestroyed()) window.webContents.send("agent:event", event);
+    },
+  );
+  agentRuntime = agents;
+  registerAgentIPC(window, agents);
+  await agents.initialize();
   await runtime.initialize();
 
   if (isDevelopment) {
@@ -69,6 +84,7 @@ const createWindow = async (): Promise<void> => {
 
   window.on("closed", () => {
     browserRuntime = null;
+    agentRuntime = null;
     mainWindow = null;
   });
 };
@@ -86,8 +102,10 @@ app.whenReady().then(async () => {
   nativeTheme.themeSource = "dark";
   stateStore = new AppStateStore(path.join(app.getPath("userData"), "app-state.json"));
   secretVault = new SecretVault(path.join(app.getPath("userData"), "vault.enc"));
+  agentStateStore = new AgentStateStore(path.join(app.getPath("userData"), "agent-state.json"));
   await stateStore.load();
   await secretVault.load();
+  await agentStateStore.load();
   await createWindow();
 
   app.on("activate", () => {
@@ -102,8 +120,9 @@ app.on("before-quit", (event) => {
   if (isQuitting) return;
   event.preventDefault();
   isQuitting = true;
-  const flush = browserRuntime?.flush() ?? Promise.resolve();
-  void flush.finally(() => app.quit());
+  const shutdownAgent = agentRuntime?.shutdown() ?? Promise.resolve();
+  const flushBrowser = browserRuntime?.flush() ?? Promise.resolve();
+  void Promise.all([shutdownAgent, flushBrowser]).finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => {
