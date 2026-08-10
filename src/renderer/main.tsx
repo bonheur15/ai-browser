@@ -156,23 +156,30 @@ function CommandDock({
   snapshot,
   activeTab,
   activeSpace,
+  maximized,
   onDispatch,
   onOpenVault,
   onOpenSite,
+  onToggleMaximize,
 }: {
   snapshot: AppSnapshot;
   activeTab: Tab | undefined;
   activeSpace: Space | undefined;
+  maximized: boolean;
   onDispatch: (command: BrowserCommand) => void;
   onOpenVault: () => void;
   onOpenSite: () => void;
+  onToggleMaximize: () => void;
 }) {
   const [input, setInput] = useState(activeTab?.url ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setInput(activeTab?.url ?? "");
-  }, [activeTab?.id]);
+    if (activeTab?.url === "about:blank") {
+      window.requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [activeTab?.id, activeTab?.url]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent): void => {
@@ -194,6 +201,12 @@ function CommandDock({
 
   return (
     <section className="command-dock" aria-label="Command dock">
+      <div className="dock-brand" aria-label="AI Browser">
+        <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
+        <span className="brand-name">AI Browser</span>
+        <span className="status-dot" title="Stored locally" />
+      </div>
+      <div className="dock-divider" />
       <div className="dock-context" style={{ "--space-color": activeSpace?.color ?? "#9be7c4" } as React.CSSProperties}>
         <span className="dock-context-dot" />
         <span>{activeSpace?.name ?? "All Spaces"}</span>
@@ -214,6 +227,11 @@ function CommandDock({
         <IconButton label="Inspect this site" onClick={onOpenSite} disabled={!activeTab} active={snapshot.drawer === "site"}><span>⌾</span></IconButton>
         <IconButton label="Bookmark this page" onClick={() => onDispatch({ type: "bookmark.create", tabId: activeTab?.id })} disabled={!activeTab}><span>✦</span></IconButton>
         <IconButton label="New tab" onClick={() => onDispatch({ type: "tab.create" })}><span className="glyph-plus">+</span></IconButton>
+      </div>
+      <div className="window-controls">
+        <WindowButton label="Minimize window" onClick={() => window.windowControls?.minimize()}><span className="minimize-icon" /></WindowButton>
+        <WindowButton label={maximized ? "Restore window" : "Maximize window"} onClick={onToggleMaximize}><span className={maximized ? "restore-icon" : "maximize-icon"} /></WindowButton>
+        <WindowButton label="Close window" onClick={() => window.windowControls?.close()} danger><span className="close-icon" /></WindowButton>
       </div>
     </section>
   );
@@ -344,8 +362,9 @@ function App() {
   }, [drawer]);
 
   const dispatch = (command: BrowserCommand): void => {
-    if (command.type === "credential.save" || command.type === "credential.reject") setCredentialPrompt(null);
+    if (command.type === "credential.reject") setCredentialPrompt(null);
     void window.browserAPI?.dispatch(command).then((result) => {
+      if (command.type === "credential.save" && result?.ok) setCredentialPrompt(null);
       if (!result.ok) setToast({ tone: "error", message: result.error });
       else setSnapshot(result.snapshot);
     });
@@ -399,15 +418,9 @@ function App() {
 
   return (
     <main className="app-shell" onClick={() => spaceMenuId && setSpaceMenuId(null)}>
-      <header className="titlebar">
-        <div className="brand" aria-label="AI Browser"><span className="brand-mark" aria-hidden="true"><span /><span /><span /></span><span className="brand-name">AI Browser</span><span className="brand-separator">/</span><span className="brand-context">local browser</span></div>
-        <div className="titlebar-status"><span className="status-dot" /> encrypted locally</div>
-        <div className="window-controls"><WindowButton label="Minimize window" onClick={() => window.windowControls?.minimize()}><span className="minimize-icon" /></WindowButton><WindowButton label={maximized ? "Restore window" : "Maximize window"} onClick={() => { window.windowControls?.toggleMaximize(); setMaximized((current) => !current); }}><span className={maximized ? "restore-icon" : "maximize-icon"} /></WindowButton><WindowButton label="Close window" onClick={() => window.windowControls?.close()} danger><span className="close-icon" /></WindowButton></div>
-      </header>
-
       <div className="canvas">
         <SpaceRail snapshot={snapshot} onScope={selectScope} onCreate={() => setSpaceDialogOpen(true)} onPrivate={() => dispatch({ type: "space.createPrivate" })} onSpaceMenu={(spaceId) => { setSpaceMenuId(spaceId); }} menuSpaceId={spaceMenuId} onRename={renameSpace} onDelete={deleteSpace} />
-        <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} onDispatch={dispatch} onOpenVault={() => { setDrawer(drawer === "vault" ? null : "vault"); }} onOpenSite={openSite} />
+        <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} maximized={maximized} onDispatch={dispatch} onOpenVault={() => { setDrawer(drawer === "vault" ? null : "vault"); }} onOpenSite={openSite} onToggleMaximize={() => { window.windowControls?.toggleMaximize(); setMaximized((current) => !current); }} />
         <TabDeck tabs={visibleTabs} spaces={snapshot.spaces} activeTabId={snapshot.activeTabId} onActivate={(tabId) => tabId ? dispatch({ type: "tab.activate", tabId }) : dispatch({ type: "tab.create" })} onClose={(tabId) => dispatch({ type: "tab.close", tabId })} onHibernate={(tabId) => dispatch({ type: "tab.hibernate", tabId })} onMoveTab={(tabId, spaceId, clone) => dispatch(clone ? { type: "tab.cloneToSpace", tabId, spaceId } : { type: "tab.moveToSpace", tabId, spaceId })} />
         <div ref={viewportRef} className={`browser-viewport${drawer ? " has-drawer" : ""}`} aria-label="Browser surface"><div className="viewport-fallback"><span className="fallback-orb">✦</span><strong>Choose a surface</strong><small>Open a tab or select a Space to begin.</small></div></div>
         {drawer === "vault" && <VaultDrawer snapshot={snapshot} onDispatch={(command) => { if (command.type === "site.inspect") openSiteFromVault(command.siteId); else dispatch(command); }} onClose={() => setDrawer(null)} />}
