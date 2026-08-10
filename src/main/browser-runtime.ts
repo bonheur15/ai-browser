@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { app, BaseWindow, shell, WebContentsView, type WebContents } from "electron";
+import { app, type BaseWindow, shell, type WebContents, WebContentsView } from "electron";
+import type {
+  BrowserPageContext,
+  BrowserPageRequest,
+  BrowserPageRequestInput,
+  BrowserPageResponse,
+} from "../shared/agent-contracts";
 import type {
   AppSnapshot,
   BrowserCommand,
@@ -16,10 +22,17 @@ import type {
   StoredCredential,
   Tab,
 } from "../shared/contracts";
-import type { BrowserPageContext, BrowserPageRequest, BrowserPageRequestInput, BrowserPageResponse } from "../shared/agent-contracts";
-import { AppStateStore } from "./state-store";
-import { SecretVault } from "./secret-vault";
-import { SpaceSessionManager } from "./space-session-manager";
+import { AgentTabLocks } from "./agent-tab-locks";
+import {
+  DEFAULT_URL,
+  hostnameFor,
+  NEW_TAB_URL,
+  navigationUrl,
+  originFor,
+} from "./browser-navigation";
+import type { SecretVault } from "./secret-vault";
+import type { SpaceSessionManager } from "./space-session-manager";
+import type { AppStateStore } from "./state-store";
 
 type LoginCandidate = {
   origin: string;
@@ -39,75 +52,38 @@ type ScreenshotContext = {
   scaleY: number;
 };
 
-const DEFAULT_URL = "about:blank";
-const GOOGLE_SEARCH = "https://www.google.com/search?q=";
-const NEW_TAB_DOCUMENT = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="color-scheme" content="dark">
-    <title>New tab</title>
-    <style>
-      :root { color-scheme: dark; }
-      html, body { width: 100%; height: 100%; margin: 0; }
-      body { display: grid; place-items: center; overflow: hidden; color: #7d8996; background: radial-gradient(circle at 50% 42%, rgba(155, 231, 196, .08), transparent 24%), #10151a; font: 12px system-ui, sans-serif; }
-      main { display: grid; justify-items: center; gap: 8px; opacity: .9; }
-      .mark { display: grid; width: 48px; height: 48px; place-items: center; margin-bottom: 6px; border: 1px solid rgba(155, 231, 196, .2); border-radius: 16px; color: #9be7c4; background: rgba(155, 231, 196, .08); font-size: 22px; }
-      strong { color: #d1dcdf; font-size: 13px; font-weight: 600; }
-      small { color: #7d8996; font-size: 11px; }
-    </style>
-  </head>
-  <body><main><span class="mark">✦</span><strong>A quiet place to start</strong><small>Search or enter a URL above</small></main></body>
-</html>`;
-const NEW_TAB_URL = `data:text/html;charset=utf-8,${encodeURIComponent(NEW_TAB_DOCUMENT)}`;
-
-const isHttpUrl = (value: string): boolean => {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-};
-
-const originFor = (value: string): string | null => {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null;
-  } catch {
-    return null;
-  }
-};
-
-const hostnameFor = (value: string): string => {
-  try {
-    return new URL(value).hostname;
-  } catch {
-    return value;
-  }
-};
-
-const navigationUrl = (input: string): string => {
-  const trimmed = input.trim();
-  if (!trimmed) return DEFAULT_URL;
-  if (isHttpUrl(trimmed)) return trimmed;
-  return `${GOOGLE_SEARCH}${encodeURIComponent(trimmed)}`;
-};
-
-export const classifyBrowserSecurity = (url: string, certificateError = false): { security: BrowserSecurityStatus; securityMessage: string } => {
-  if (certificateError) return { security: "not-secure", securityMessage: "The page certificate could not be verified" };
+export const classifyBrowserSecurity = (
+  url: string,
+  certificateError = false,
+): { security: BrowserSecurityStatus; securityMessage: string } => {
+  if (certificateError)
+    return {
+      security: "not-secure",
+      securityMessage: "The page certificate could not be verified",
+    };
   try {
     const protocol = new URL(url).protocol;
-    if (protocol === "https:") return { security: "secure", securityMessage: "Encrypted HTTPS connection" };
-    if (protocol === "http:") return { security: "not-secure", securityMessage: "This page is using an unencrypted HTTP connection" };
+    if (protocol === "https:")
+      return { security: "secure", securityMessage: "Encrypted HTTPS connection" };
+    if (protocol === "http:")
+      return {
+        security: "not-secure",
+        securityMessage: "This page is using an unencrypted HTTP connection",
+      };
   } catch {
     // Invalid and renderer-generated URLs are special browser pages.
   }
   return { security: "special", securityMessage: "This is a browser-generated or special page" };
 };
 
-export const aggregateMemoryUsageMb = (metrics: Array<{ memory?: { workingSetSize?: number } }>): number | null => {
-  const values = metrics.map((metric) => metric.memory?.workingSetSize).filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+export const aggregateMemoryUsageMb = (
+  metrics: Array<{ memory?: { workingSetSize?: number } }>,
+): number | null => {
+  const values = metrics
+    .map((metric) => metric.memory?.workingSetSize)
+    .filter(
+      (value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
+    );
   if (values.length === 0) return null;
   return Math.round((values.reduce((total, value) => total + value, 0) / 1024) * 10) / 10;
 };
@@ -115,10 +91,21 @@ export const aggregateMemoryUsageMb = (metrics: Array<{ memory?: { workingSetSiz
 export class BrowserRuntime {
   private readonly views = new Map<string, WebContentsView>();
   private readonly pendingCandidates = new Map<string, PendingCandidate>();
-  private readonly pendingPageRequests = new Map<string, { senderId: number; resolve: (response: BrowserPageResponse) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  private readonly pendingPageRequests = new Map<
+    string,
+    {
+      senderId: number;
+      resolve: (response: BrowserPageResponse) => void;
+      reject: (error: Error) => void;
+      timer: NodeJS.Timeout;
+    }
+  >();
   private readonly screenshotContexts = new Map<string, ScreenshotContext>();
-  private readonly pendingFillResults = new Map<string, { senderId: number; resolve: (ok: boolean) => void; timer: NodeJS.Timeout }>();
-  private readonly agentLocks = new Map<string, { threadId: string }>();
+  private readonly pendingFillResults = new Map<
+    string,
+    { senderId: number; resolve: (ok: boolean) => void; timer: NodeJS.Timeout }
+  >();
+  private readonly agentLocks: AgentTabLocks;
   private readonly certificateErrors = new Set<string>();
   private attachedTabId: string | null = null;
   private viewport: BrowserViewportBounds = { x: 92, y: 154, width: 1120, height: 600 };
@@ -130,7 +117,11 @@ export class BrowserRuntime {
     private readonly sessions: SpaceSessionManager,
     private readonly vault: SecretVault,
     private readonly emit: (event: BrowserEvent) => void,
-  ) {}
+  ) {
+    this.agentLocks = new AgentTabLocks((tabId, locked) => {
+      void this.setViewInteractionLocked(tabId, locked);
+    });
+  }
 
   async initialize(): Promise<void> {
     const snapshot = this.state.getState();
@@ -163,7 +154,10 @@ export class BrowserRuntime {
   private currentRuntimeStatus(): BrowserRuntimeStatus {
     const snapshot = this.state.getState();
     const tab = snapshot.tabs.find((candidate) => candidate.id === this.attachedTabId);
-    const security = classifyBrowserSecurity(tab?.url ?? "about:blank", tab ? this.certificateErrors.has(tab.id) : false);
+    const security = classifyBrowserSecurity(
+      tab?.url ?? "about:blank",
+      tab ? this.certificateErrors.has(tab.id) : false,
+    );
     let memoryUsageMb: number | null = null;
     try {
       memoryUsageMb = aggregateMemoryUsageMb(app.getAppMetrics());
@@ -185,16 +179,20 @@ export class BrowserRuntime {
 
   snapshot(): AppSnapshot {
     const snapshot = this.state.snapshot(this.vault.summaries(), this.vault.available);
-    return { ...snapshot, tabs: snapshot.tabs.map((tab) => ({ ...tab, agentLock: this.agentLocks.get(tab.id) })) };
+    return {
+      ...snapshot,
+      tabs: snapshot.tabs.map((tab) => {
+        const lock = this.agentLocks.get(tab.id);
+        return lock ? { ...tab, agentLock: lock } : tab;
+      }),
+    };
   }
 
   setAgentTabLock(tabId: string, threadId: string, locked: boolean): void {
     if (locked) {
-      this.agentLocks.set(tabId, { threadId });
-      void this.setViewInteractionLocked(tabId, true);
+      this.agentLocks.set(tabId, threadId, true);
     } else {
-      this.agentLocks.delete(tabId);
-      void this.setViewInteractionLocked(tabId, false);
+      this.agentLocks.set(tabId, threadId, false);
     }
     this.publish();
   }
@@ -204,16 +202,17 @@ export class BrowserRuntime {
     if (!view || view.webContents.isDestroyed()) return;
     const value = locked ? "none" : "auto";
     try {
-      await view.webContents.executeJavaScript(`document.documentElement.style.pointerEvents = ${JSON.stringify(value)}; document.body && (document.body.style.pointerEvents = ${JSON.stringify(value)});`, true);
+      await view.webContents.executeJavaScript(
+        `document.documentElement.style.pointerEvents = ${JSON.stringify(value)}; document.body && (document.body.style.pointerEvents = ${JSON.stringify(value)});`,
+        true,
+      );
     } catch {
       // A page can be between navigations; the next load event reapplies the lock.
     }
   }
 
   releaseAgentTabLocks(threadId: string): void {
-    for (const [tabId, lock] of this.agentLocks) {
-      if (lock.threadId === threadId) this.setAgentTabLock(tabId, threadId, false);
-    }
+    this.agentLocks.release(threadId);
   }
 
   setViewport(bounds: BrowserViewportBounds): void {
@@ -235,7 +234,9 @@ export class BrowserRuntime {
   }
 
   listAgentCredentials(spaceId: string, origin?: string): CredentialSummary[] {
-    return this.vault.summaries(spaceId).filter((credential) => !origin || credential.origin === origin);
+    return this.vault
+      .summaries(spaceId)
+      .filter((credential) => !origin || credential.origin === origin);
   }
 
   async agentCreateTab(spaceId: string, url = DEFAULT_URL): Promise<Tab> {
@@ -278,14 +279,26 @@ export class BrowserRuntime {
     this.requireView(tabId).webContents.reload();
   }
 
-  async agentPageRequest(tabId: string, request: BrowserPageRequestInput): Promise<BrowserPageResponse> {
+  async agentPageRequest(
+    tabId: string,
+    request: BrowserPageRequestInput,
+  ): Promise<BrowserPageResponse> {
     await this.activateTab(tabId);
     const view = this.requireView(tabId);
     const requestId = randomUUID();
-    if (request.type === "click" && !request.ref && typeof request.x === "number" && typeof request.y === "number") {
+    if (
+      request.type === "click" &&
+      !request.ref &&
+      typeof request.x === "number" &&
+      typeof request.y === "number"
+    ) {
       const screenshotContext = this.screenshotContexts.get(tabId);
       if (screenshotContext?.snapshotId !== request.snapshotId) {
-        return { requestId, ok: false, error: "Coordinate clicks require a recent screenshot context" };
+        return {
+          requestId,
+          ok: false,
+          error: "Coordinate clicks require a recent screenshot context",
+        };
       }
       this.screenshotContexts.delete(tabId);
       const x = Math.round(request.x * screenshotContext.scaleX);
@@ -294,7 +307,15 @@ export class BrowserRuntime {
       view.webContents.sendInputEvent({ type: "mouseMove", x, y });
       view.webContents.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
       view.webContents.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
-      return { requestId, ok: true, result: { coordinate: { x: request.x, y: request.y }, nativeCoordinate: { x, y }, input: "native-mouse" } };
+      return {
+        requestId,
+        ok: true,
+        result: {
+          coordinate: { x: request.x, y: request.y },
+          nativeCoordinate: { x, y },
+          input: "native-mouse",
+        },
+      };
     }
     const pageRequest = { ...request, requestId } as BrowserPageRequest;
     return new Promise<BrowserPageResponse>((resolve, reject) => {
@@ -302,24 +323,43 @@ export class BrowserRuntime {
         this.pendingPageRequests.delete(requestId);
         reject(new Error("The page did not respond in time"));
       }, 20_000);
-      this.pendingPageRequests.set(requestId, { senderId: view.webContents.id, resolve, reject, timer });
+      this.pendingPageRequests.set(requestId, {
+        senderId: view.webContents.id,
+        resolve,
+        reject,
+        timer,
+      });
       view.webContents.send("browser:agent-page-request", pageRequest);
     });
   }
 
   async agentPageContext(tabId: string): Promise<BrowserPageContext> {
     const response = await this.agentPageRequest(tabId, { type: "context" });
-    if (!response.ok || !response.context) throw new Error(response.error ?? "Unable to read the page context");
+    if (!response.ok || !response.context)
+      throw new Error(response.error ?? "Unable to read the page context");
     const screenshotContext = this.screenshotContexts.get(tabId);
-    if (screenshotContext) this.screenshotContexts.set(tabId, { ...screenshotContext, snapshotId: response.context.snapshotId });
+    if (screenshotContext)
+      this.screenshotContexts.set(tabId, {
+        ...screenshotContext,
+        snapshotId: response.context.snapshotId,
+      });
     return response.context;
   }
 
-  async agentCaptureScreenshot(tabId: string): Promise<{ dataUrl: string; url: string; title: string }> {
+  async agentCaptureScreenshot(
+    tabId: string,
+  ): Promise<{ dataUrl: string; url: string; title: string }> {
     const context = await this.agentPageContext(tabId);
     try {
-      const redaction = await this.agentPageRequest(tabId, { type: "redact", snapshotId: context.snapshotId, enabled: true });
-      if (!redaction.ok) throw new Error(redaction.error ?? "Unable to redact sensitive fields before taking a screenshot");
+      const redaction = await this.agentPageRequest(tabId, {
+        type: "redact",
+        snapshotId: context.snapshotId,
+        enabled: true,
+      });
+      if (!redaction.ok)
+        throw new Error(
+          redaction.error ?? "Unable to redact sensitive fields before taking a screenshot",
+        );
       const image = await this.requireView(tabId).webContents.capturePage();
       const size = image.getSize();
       const resized = size.width > 1280 ? image.resize({ width: 1280 }) : image;
@@ -332,7 +372,11 @@ export class BrowserRuntime {
       return { dataUrl: resized.toDataURL(), url: context.url, title: context.title };
     } finally {
       try {
-        await this.agentPageRequest(tabId, { type: "redact", snapshotId: context.snapshotId, enabled: false });
+        await this.agentPageRequest(tabId, {
+          type: "redact",
+          snapshotId: context.snapshotId,
+          enabled: false,
+        });
       } catch {
         // The page may have navigated while the screenshot was being captured.
       }
@@ -343,7 +387,8 @@ export class BrowserRuntime {
     const tab = this.requireTab(tabId);
     const credential = this.vault.get(credentialId, tab.spaceId);
     if (!credential) throw new Error("Credential is not available in this Space");
-    if (originFor(tab.url) !== credential.origin) throw new Error("Credential origin does not match the active page");
+    if (originFor(tab.url) !== credential.origin)
+      throw new Error("Credential origin does not match the active page");
     await this.activateTab(tab.id);
     return this.fillCredential(credentialId, tab.id);
   }
@@ -378,7 +423,11 @@ export class BrowserRuntime {
     const space = this.getSpace(tab.spaceId);
     if (!space || space.kind === "private") return;
     if (!this.vault.available) {
-      this.emit({ type: "toast", tone: "error", message: "Password saving is unavailable because secure OS storage is not available" });
+      this.emit({
+        type: "toast",
+        tone: "error",
+        message: "Password saving is unavailable because secure OS storage is not available",
+      });
       return;
     }
     const site = this.findSite(space.id, candidate.origin);
@@ -419,20 +468,27 @@ export class BrowserRuntime {
   }
 
   private async execute(command: BrowserCommand): Promise<void> {
-    const targetTabId = "tabId" in command && typeof command.tabId === "string" ? command.tabId : undefined;
-    if (targetTabId && this.agentLocks.has(targetTabId)) throw new Error("This tab is currently being used by the agent");
+    const targetTabId =
+      "tabId" in command && typeof command.tabId === "string" ? command.tabId : undefined;
+    if (targetTabId && this.agentLocks.has(targetTabId))
+      throw new Error("This tab is currently being used by the agent");
     switch (command.type) {
       case "space.create": {
         const space = this.state.addSpace({
           name: command.name ?? "New Space",
-          color: command.color,
-          icon: command.icon,
+          ...(command.color ? { color: command.color } : {}),
+          ...(command.icon ? { icon: command.icon } : {}),
         });
         await this.createTab(space.id, DEFAULT_URL);
         return;
       }
       case "space.createPrivate": {
-        const space = this.state.addSpace({ name: "Private", kind: "private", color: "#d1b4ff", icon: "eye-off" });
+        const space = this.state.addSpace({
+          name: "Private",
+          kind: "private",
+          color: "#d1b4ff",
+          icon: "eye-off",
+        });
         await this.createTab(space.id, DEFAULT_URL);
         return;
       }
@@ -463,7 +519,8 @@ export class BrowserRuntime {
         const space = this.requireSpace(command.spaceId);
         const tabs = this.state.getState().tabs.filter((tab) => tab.spaceId === space.id);
         for (const tab of tabs) this.destroyView(tab.id);
-        if (!this.state.removeSpace(space.id)) throw new Error("The last persistent Space cannot be deleted");
+        if (!this.state.removeSpace(space.id))
+          throw new Error("The last persistent Space cannot be deleted");
         await this.vault.removeForSpace(space.id);
         this.sessions.forget(space.id);
         this.attachTab(this.state.getState().activeTabId);
@@ -474,7 +531,10 @@ export class BrowserRuntime {
         this.attachTab(this.state.getState().activeTabId);
         return;
       case "tab.create":
-        await this.createTab(command.spaceId ?? this.state.getState().activeSpaceId, command.url ?? DEFAULT_URL);
+        await this.createTab(
+          command.spaceId ?? this.state.getState().activeSpaceId,
+          command.url ?? DEFAULT_URL,
+        );
         return;
       case "tab.activate":
         await this.activateTab(command.tabId);
@@ -511,7 +571,9 @@ export class BrowserRuntime {
         return;
       case "bookmark.remove":
         {
-          const bookmark = this.state.getState().bookmarks.find((candidate) => candidate.id === command.bookmarkId);
+          const bookmark = this.state
+            .getState()
+            .bookmarks.find((candidate) => candidate.id === command.bookmarkId);
           this.state.removeBookmark(command.bookmarkId);
           if (bookmark) {
             const origin = originFor(bookmark.url);
@@ -571,7 +633,9 @@ export class BrowserRuntime {
     });
     view.webContents.on("did-finish-load", () => {
       if (this.agentLocks.has(tab.id)) void this.setViewInteractionLocked(tab.id, true);
-      console.log(`[browser] loaded ${tab.url === DEFAULT_URL ? "new tab" : view.webContents.getURL()}`);
+      console.log(
+        `[browser] loaded ${tab.url === DEFAULT_URL ? "new tab" : view.webContents.getURL()}`,
+      );
     });
     view.webContents.on("preload-error", (_event, preloadPath, error) => {
       console.error(`[browser] preload failed ${preloadPath}`, error);
@@ -595,7 +659,8 @@ export class BrowserRuntime {
       this.publish();
     });
     view.webContents.on("page-favicon-updated", (_event, favicons) => {
-      this.state.updateTab(tab.id, { faviconUrl: favicons[0] });
+      const faviconUrl = favicons[0];
+      if (faviconUrl) this.state.updateTab(tab.id, { faviconUrl });
       this.publish();
     });
     view.webContents.on("did-navigate", (_event, url) => {
@@ -608,12 +673,19 @@ export class BrowserRuntime {
         void this.handleNavigation(tab.id, url);
       }
     });
-    view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (isMainFrame && errorCode !== -3) {
-        this.publishRuntimeStatus();
-        this.emit({ type: "toast", tone: "error", message: `Unable to load ${hostnameFor(validatedURL)}: ${errorDescription}` });
-      }
-    });
+    view.webContents.on(
+      "did-fail-load",
+      (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (isMainFrame && errorCode !== -3) {
+          this.publishRuntimeStatus();
+          this.emit({
+            type: "toast",
+            tone: "error",
+            message: `Unable to load ${hostnameFor(validatedURL)}: ${errorDescription}`,
+          });
+        }
+      },
+    );
 
     this.loadTabURL(view, tab.url).catch((error: unknown) => {
       console.error(`[browser] unable to load tab ${tab.id}`, error);
@@ -649,7 +721,9 @@ export class BrowserRuntime {
   private async closeTab(tabId: string): Promise<void> {
     const tab = this.requireTab(tabId);
     const state = this.state.getState();
-    const spaceTabs = state.tabs.filter((candidate) => candidate.spaceId === tab.spaceId && candidate.id !== tab.id);
+    const spaceTabs = state.tabs.filter(
+      (candidate) => candidate.spaceId === tab.spaceId && candidate.id !== tab.id,
+    );
     this.destroyView(tab.id);
     this.state.removeTab(tab.id);
     if (spaceTabs.length === 0) await this.createTab(tab.spaceId, DEFAULT_URL);
@@ -672,7 +746,9 @@ export class BrowserRuntime {
     const tab = this.requireTab(tabId);
     if (tab.status === "hibernated") return;
     if (this.state.getState().activeTabId === tabId) {
-      const replacement = this.state.visibleTabs(this.state.getState().scope).find((candidate) => candidate.id !== tabId);
+      const replacement = this.state
+        .visibleTabs(this.state.getState().scope)
+        .find((candidate) => candidate.id !== tabId);
       if (!replacement) throw new Error("Open another tab before hibernating the active tab");
       this.state.activateTab(replacement.id);
       this.attachTab(replacement.id);
@@ -699,7 +775,9 @@ export class BrowserRuntime {
     const tab = this.requireTab(tabId);
     const origin = originFor(tab.url);
     if (!origin) throw new Error("Only web pages can be bookmarked");
-    const existing = this.state.getState().bookmarks.find((bookmark) => bookmark.spaceId === tab.spaceId && bookmark.url === tab.url);
+    const existing = this.state
+      .getState()
+      .bookmarks.find((bookmark) => bookmark.spaceId === tab.spaceId && bookmark.url === tab.url);
     if (existing) {
       this.state.removeBookmark(existing.id);
       return;
@@ -731,12 +809,20 @@ export class BrowserRuntime {
     this.emit({ type: "toast", tone: "success", message: `${site.hostname} site data cleared` });
   }
 
-  private async forgetSite(siteId: string, clearData: boolean, removeCredentials: boolean): Promise<void> {
+  private async forgetSite(
+    siteId: string,
+    clearData: boolean,
+    removeCredentials: boolean,
+  ): Promise<void> {
     const site = this.requireSite(siteId);
     const space = this.requireSpace(site.spaceId);
     if (clearData) await this.sessions.clearOrigin(space, site.origin);
     if (removeCredentials) await this.vault.removeForOrigin(space.id, site.origin);
-    const bookmarks = this.state.getState().bookmarks.filter((bookmark) => bookmark.spaceId === space.id && originFor(bookmark.url) === site.origin);
+    const bookmarks = this.state
+      .getState()
+      .bookmarks.filter(
+        (bookmark) => bookmark.spaceId === space.id && originFor(bookmark.url) === site.origin,
+      );
     for (const bookmark of bookmarks) this.state.removeBookmark(bookmark.id);
     this.state.removeSite(site.id);
   }
@@ -746,9 +832,12 @@ export class BrowserRuntime {
     if (!pending) throw new Error("This credential prompt has expired");
     clearTimeout(pending.timeout);
     this.pendingCandidates.delete(requestId);
-    const existing = this.vault.summaries(pending.request.spaceId).find((credential) =>
-      credential.origin === pending.origin && credential.username === pending.username,
-    );
+    const existing = this.vault
+      .summaries(pending.request.spaceId)
+      .find(
+        (credential) =>
+          credential.origin === pending.origin && credential.username === pending.username,
+      );
     const timestamp = new Date().toISOString();
     const credential: StoredCredential = {
       id: existing?.id ?? randomUUID(),
@@ -762,8 +851,18 @@ export class BrowserRuntime {
     };
     await this.vault.save(credential);
     const site = this.findSite(pending.request.spaceId, pending.origin);
-    if (site) this.state.upsertSite({ ...site, credentialCount: this.vault.summaries(pending.request.spaceId).filter((item) => item.origin === pending.origin).length });
-    this.emit({ type: "toast", tone: "success", message: `Login saved in ${this.requireSpace(pending.request.spaceId).name}` });
+    if (site)
+      this.state.upsertSite({
+        ...site,
+        credentialCount: this.vault
+          .summaries(pending.request.spaceId)
+          .filter((item) => item.origin === pending.origin).length,
+      });
+    this.emit({
+      type: "toast",
+      tone: "success",
+      message: `Login saved in ${this.requireSpace(pending.request.spaceId).name}`,
+    });
   }
 
   private rejectCredential(requestId: string, neverForSite: boolean): void {
@@ -803,25 +902,43 @@ export class BrowserRuntime {
     if (!credential) return;
     await this.vault.remove(credentialId, credential.spaceId);
     const site = this.findSite(credential.spaceId, credential.origin);
-    if (site) this.state.upsertSite({ ...site, credentialCount: this.vault.summaries(credential.spaceId).filter((item) => item.origin === credential.origin).length });
+    if (site)
+      this.state.upsertSite({
+        ...site,
+        credentialCount: this.vault
+          .summaries(credential.spaceId)
+          .filter((item) => item.origin === credential.origin).length,
+      });
   }
 
   private async handleNavigation(tabId: string, url: string): Promise<void> {
     const tab = this.requireTab(tabId);
     if (url === NEW_TAB_URL) {
-      this.state.updateTab(tabId, { url: DEFAULT_URL, title: "New tab", status: "loaded", lastActiveAt: new Date().toISOString() });
+      this.state.updateTab(tabId, {
+        url: DEFAULT_URL,
+        title: "New tab",
+        status: "loaded",
+        lastActiveAt: new Date().toISOString(),
+      });
       this.publish();
       this.publishRuntimeStatus();
       return;
     }
     const origin = originFor(url);
-    this.state.updateTab(tabId, { url, title: hostnameFor(url), status: "loaded", lastActiveAt: new Date().toISOString() });
+    this.state.updateTab(tabId, {
+      url,
+      title: hostnameFor(url),
+      status: "loaded",
+      lastActiveAt: new Date().toISOString(),
+    });
     if (origin && tab.spaceId) {
       const current = this.findSite(tab.spaceId, origin);
       const inspected = await this.sessions.inspectOrigin(this.requireSpace(tab.spaceId), origin);
-      this.state.upsertSite(current
-        ? { ...current, ...inspected, lastVisitedAt: new Date().toISOString() }
-        : this.newSite(tab.spaceId, origin, inspected));
+      this.state.upsertSite(
+        current
+          ? { ...current, ...inspected, lastVisitedAt: new Date().toISOString() }
+          : this.newSite(tab.spaceId, origin, inspected),
+      );
     }
     this.publish();
     this.publishRuntimeStatus();
@@ -839,14 +956,20 @@ export class BrowserRuntime {
     return view.webContents.loadURL(url === DEFAULT_URL ? NEW_TAB_URL : url);
   }
 
-  private newSite(spaceId: string, origin: string, inspected: { cookieCount: number; storagePresent: boolean }): SiteRecord {
+  private newSite(
+    spaceId: string,
+    origin: string,
+    inspected: { cookieCount: number; storagePresent: boolean },
+  ): SiteRecord {
     return {
       id: `${spaceId}:${origin}`,
       spaceId,
       origin,
       hostname: hostnameFor(origin),
       lastVisitedAt: new Date().toISOString(),
-      credentialCount: this.vault.summaries(spaceId).filter((credential) => credential.origin === origin).length,
+      credentialCount: this.vault
+        .summaries(spaceId)
+        .filter((credential) => credential.origin === origin).length,
       bookmarked: false,
       ...inspected,
       neverSaveCredentials: false,
@@ -898,7 +1021,8 @@ export class BrowserRuntime {
 
   private findTabByWebContents(sender: WebContents): Tab | null {
     for (const [tabId, view] of this.views) {
-      if (view.webContents.id === sender.id) return this.state.getState().tabs.find((tab) => tab.id === tabId) ?? null;
+      if (view.webContents.id === sender.id)
+        return this.state.getState().tabs.find((tab) => tab.id === tabId) ?? null;
     }
     return null;
   }
@@ -934,7 +1058,9 @@ export class BrowserRuntime {
   }
 
   private findSite(spaceId: string, origin: string): SiteRecord | undefined {
-    return this.state.getState().sites.find((site) => site.spaceId === spaceId && site.origin === origin);
+    return this.state
+      .getState()
+      .sites.find((site) => site.spaceId === spaceId && site.origin === origin);
   }
 
   private publish(): void {
