@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import path from "node:path";
 import { BrowserRuntime } from "./main/browser-runtime";
 import { registerBrowserIPC } from "./main/ipc";
@@ -83,6 +83,7 @@ ipcMain.on("window:close", () => mainWindow?.close());
 ipcMain.handle("window:is-maximized", () => mainWindow?.isMaximized() ?? false);
 
 app.whenReady().then(async () => {
+  nativeTheme.themeSource = "dark";
   stateStore = new AppStateStore(path.join(app.getPath("userData"), "app-state.json"));
   secretVault = new SecretVault(path.join(app.getPath("userData"), "vault.enc"));
   await stateStore.load();
