@@ -10,6 +10,7 @@ import type {
   SpaceScope,
   Tab,
 } from "../shared/contracts";
+import { DEFAULT_APP_SETTINGS, normalizeSettings } from "../shared/settings";
 
 const GOOGLE_URL = "https://www.google.com";
 const DEFAULT_COLORS = ["#9be7c4", "#8db4ff", "#f4bf7a", "#d8a5ff", "#ff9d9d"];
@@ -42,7 +43,7 @@ const createDefaultState = (): PersistedState => {
   };
 
   return {
-    version: 1,
+    version: 2,
     spaces: [personal, work],
     tabs: [firstTab],
     bookmarks: [],
@@ -52,15 +53,24 @@ const createDefaultState = (): PersistedState => {
     activeTabId: firstTab.id,
     drawer: null,
     selectedSiteId: null,
+    settings: structuredClone(DEFAULT_APP_SETTINGS),
   };
+};
+
+type LegacyPersistedState = Omit<PersistedState, "version" | "settings"> & {
+  version: 1;
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-const isValidState = (value: unknown): value is PersistedState => {
+const isValidState = (value: unknown): value is PersistedState | LegacyPersistedState => {
   if (!isObject(value)) return false;
-  return value.version === 1 && Array.isArray(value.spaces) && Array.isArray(value.tabs);
+  return (
+    (value.version === 1 || value.version === 2) &&
+    Array.isArray(value.spaces) &&
+    Array.isArray(value.tabs)
+  );
 };
 
 export class AppStateStore {
@@ -82,6 +92,8 @@ export class AppStateStore {
         this.state = {
           ...createDefaultState(),
           ...parsed,
+          version: 2,
+          settings: normalizeSettings("settings" in parsed ? parsed.settings : undefined),
           drawer: parsed.drawer ?? null,
           selectedSiteId: parsed.selectedSiteId ?? null,
         };
