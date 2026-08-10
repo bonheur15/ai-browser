@@ -13,7 +13,7 @@ import type {
 import { isJsonObject, type JsonObject, type JsonValue } from "../shared/json";
 import type { AgentEvidenceStore } from "./agent-evidence-store";
 import { AgentPolicyEngine, isAgentPolicy } from "./agent-policy";
-import { defaultAgentPolicy, type AgentStateStore, normalizePolicy } from "./agent-state-store";
+import { type AgentStateStore, defaultAgentPolicy, normalizePolicy } from "./agent-state-store";
 import { BrowserAgentTools } from "./browser-agent-tools";
 import {
   CodexAppServerClient,
@@ -67,6 +67,9 @@ export class AgentRuntime {
           status === "stopped"
             ? { status: "stopped" }
             : { status, ...(message ? { message } : {}) };
+        if (["stopped", "missing", "unauthenticated", "crashed"].includes(status)) {
+          this.browser.releaseAllAgentTabLocks();
+        }
         this.emit({ type: "agent.connection", connection: this.connection });
         this.publish();
       },
@@ -187,6 +190,10 @@ export class AgentRuntime {
         return;
       case "agent.thread.delete":
         this.stopApprovals(command.threadId);
+        this.browser.releaseAgentTabLocks(command.threadId);
+        this.runningActionIds.delete(command.threadId);
+        this.turnIds.delete(command.threadId);
+        this.explicitRunStatus.delete(command.threadId);
         await this.evidence.removeForThread(command.threadId);
         this.state.removeThread(command.threadId);
         return;
@@ -462,7 +469,7 @@ export class AgentRuntime {
       ...(input.status !== "running" ? { completedAt: new Date().toISOString() } : {}),
     } as const;
     this.state.upsertAction(action);
-    if (input.tabId)
+    if (input.tabId && input.actionClass !== "read")
       this.browser.setAgentTabLock(input.tabId, threadId, input.status === "running");
     this.emit({ type: "agent.action", action });
     if (input.status !== "running") this.runningActionIds.delete(threadId);
