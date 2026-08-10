@@ -12,6 +12,8 @@ let lastCandidateAt = 0;
 let pageSnapshot: BrowserPageContext | null = null;
 let pageElementRefs = new Map<string, Element>();
 let redactionNodes: HTMLElement[] = [];
+let screenshotContextActive = false;
+let screenshotContextId: string | null = null;
 
 const visible = (element: Element): boolean => {
   const style = window.getComputedStyle(element);
@@ -81,6 +83,7 @@ const sensitiveElements = (): Element[] => [...document.querySelectorAll<Element
 
 const createContext = (): BrowserPageContext => {
   const snapshotId = crypto.randomUUID();
+  screenshotContextId = screenshotContextActive ? snapshotId : null;
   const elements = interactiveElements();
   pageElementRefs = new Map(elements.map((element, index) => [`ref_${index + 1}`, element]));
   const pageElements = elements.map((element, index): BrowserPageElement => ({
@@ -113,6 +116,13 @@ const createContext = (): BrowserPageContext => {
   };
   pageSnapshot = context;
   return context;
+};
+
+const invalidatePageContext = (): void => {
+  pageSnapshot = null;
+  pageElementRefs.clear();
+  screenshotContextActive = false;
+  screenshotContextId = null;
 };
 
 const elementForRef = (snapshotId: string, ref: string): Element | null => {
@@ -214,15 +224,21 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
     if (request.type === "redact") {
       if (!pageSnapshot || pageSnapshot.snapshotId !== request.snapshotId) throw new Error("Page context expired");
       applyRedaction(request.enabled);
+      if (request.enabled) {
+        screenshotContextActive = true;
+        screenshotContextId = request.snapshotId;
+      }
       pageResponse({ requestId: request.requestId, ok: true, result: { redacted: request.enabled } });
       return;
     }
 
     if (request.type === "click") {
+      if (!request.ref && screenshotContextId !== request.snapshotId) throw new Error("Coordinate clicks require a recent screenshot context");
       const target = request.ref ? elementForRef(request.snapshotId, request.ref) : document.elementFromPoint(request.x ?? 0, request.y ?? 0);
       if (!(target instanceof HTMLElement) || !visible(target)) throw new Error("The requested page element is not visible");
       target.click();
       pageResponse({ requestId: request.requestId, ok: true, result: { label: elementLabel(target), role: elementRole(target) } });
+      invalidatePageContext();
       return;
     }
 
@@ -241,6 +257,7 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
         target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
       } else throw new Error("The requested element cannot receive text");
       pageResponse({ requestId: request.requestId, ok: true, result: { label: elementLabel(target), characters: text.length } });
+      invalidatePageContext();
       return;
     }
 
@@ -253,6 +270,7 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
       target.dispatchEvent(new Event("input", { bubbles: true }));
       target.dispatchEvent(new Event("change", { bubbles: true }));
       pageResponse({ requestId: request.requestId, ok: true, result: { label: elementLabel(target), selected: option.textContent?.trim() ?? "" } });
+      invalidatePageContext();
       return;
     }
 
@@ -264,6 +282,7 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
       target.dispatchEvent(new KeyboardEvent("keydown", init));
       target.dispatchEvent(new KeyboardEvent("keyup", init));
       pageResponse({ requestId: request.requestId, ok: true, result: { key: init.key, label: elementLabel(target) } });
+      invalidatePageContext();
       return;
     }
 
@@ -273,6 +292,7 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
       if (target instanceof HTMLElement) target.scrollBy({ left: Math.max(-2000, Math.min(2000, request.x)), top: Math.max(-2000, Math.min(2000, request.y)), behavior: "auto" });
       else window.scrollBy({ left: Math.max(-2000, Math.min(2000, request.x)), top: Math.max(-2000, Math.min(2000, request.y)), behavior: "auto" });
       pageResponse({ requestId: request.requestId, ok: true, result: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) } });
+      invalidatePageContext();
       return;
     }
 
@@ -282,6 +302,7 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
       if (!(form instanceof HTMLFormElement)) throw new Error("The requested element has no form to submit");
       form.requestSubmit();
       pageResponse({ requestId: request.requestId, ok: true, result: { submitted: true } });
+      invalidatePageContext();
     }
   } catch (error: unknown) {
     pageResponse({ requestId: request.requestId, ok: false, error: error instanceof Error ? error.message : "The page action failed" });
@@ -321,6 +342,7 @@ ipcRenderer.on("browser:fill-credential", (_event, credential: FillCredential) =
   if (username) setInputValue(username, credential.username);
   setInputValue(password, credential.password);
   ipcRenderer.send("browser:credential-fill-result", { requestId: credential.requestId, ok: true });
+  invalidatePageContext();
 });
 
 ipcRenderer.on("browser:agent-page-request", (_event, request: BrowserPageRequest) => {
@@ -328,7 +350,6 @@ ipcRenderer.on("browser:agent-page-request", (_event, request: BrowserPageReques
 });
 
 window.addEventListener("beforeunload", () => {
-  pageSnapshot = null;
-  pageElementRefs.clear();
+  invalidatePageContext();
   clearRedaction();
 });
