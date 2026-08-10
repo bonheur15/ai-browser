@@ -65,6 +65,7 @@ export type AgentActionTrace = {
   startedAt: string;
   completedAt?: string;
   error?: string;
+  evidenceIds?: string[];
 };
 
 export type AgentApprovalRequest = {
