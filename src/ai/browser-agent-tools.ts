@@ -23,6 +23,7 @@ export type BrowserToolResponse = {
 export type BrowserAgentCallbacks = {
   requestApproval: (input: { actionClass: AgentActionClass; summary: string; spaceId?: string; tabId?: string }) => Promise<boolean>;
   onAction: (input: { toolName: string; actionClass: AgentActionClass; spaceId?: string; tabId?: string; summary: string; status: "running" | "succeeded" | "failed" | "denied" }) => void;
+  onEvidence?: (input: { tabId: string; spaceId: string; title: string; url: string; dataUrl: string }) => void;
 };
 
 const text = (value: unknown, name: string, max = 2_000): string => {
@@ -79,13 +80,13 @@ export class BrowserAgentTools {
   }
 
   actionClass(toolName: string): AgentActionClass {
-    const normalized = toolName.replace(/^browser\./, "");
+    const normalized = normalizeToolName(toolName);
     return actionClasses[normalized] ?? "read";
   }
 
   async execute(threadId: string, policy: AgentPolicy, request: CodexServerRequest, callbacks: BrowserAgentCallbacks): Promise<BrowserToolResponse> {
     const toolName = request.method === "item/tool/call" && typeof request.params?.tool === "string" ? request.params.tool : "";
-    const normalized = toolName.replace(/^browser\./, "");
+    const normalized = normalizeToolName(toolName);
     const actionClass = this.actionClass(toolName);
     const args = objectValue(request.params?.arguments ?? {});
     let target: { tab?: Tab; spaceId?: string; url?: string } = {};
@@ -108,7 +109,7 @@ export class BrowserAgentTools {
         }
       }
 
-      const result = await this.run(normalized, args, policy, target);
+      const result = await this.run(normalized, args, policy, target, callbacks);
       callbacks.onAction({ toolName: normalized, actionClass, ...target, summary, status: result.success ? "succeeded" : "failed" });
       return result;
     } catch (error: unknown) {
@@ -118,7 +119,7 @@ export class BrowserAgentTools {
     }
   }
 
-  private async run(normalized: string, args: JsonObject, policy: AgentPolicy, target: { tab?: Tab; spaceId?: string; url?: string }): Promise<BrowserToolResponse> {
+  private async run(normalized: string, args: JsonObject, policy: AgentPolicy, target: { tab?: Tab; spaceId?: string; url?: string }, callbacks: BrowserAgentCallbacks): Promise<BrowserToolResponse> {
     switch (normalized) {
       case "list_spaces": {
         const snapshot = this.browser.snapshot();
@@ -197,7 +198,9 @@ export class BrowserAgentTools {
         return success({ type: "inputText", text: JSON.stringify(context) });
       }
       case "capture_screenshot": {
-        const screenshot = await this.browser.agentCaptureScreenshot(this.requireTab(target).id);
+        const tab = this.requireTab(target);
+        const screenshot = await this.browser.agentCaptureScreenshot(tab.id);
+        callbacks.onEvidence?.({ tabId: tab.id, spaceId: tab.spaceId, title: screenshot.title, url: screenshot.url, dataUrl: screenshot.dataUrl });
         return success(
           { type: "inputText", text: `Screenshot captured for ${screenshot.title || screenshot.url}` },
           { type: "inputImage", imageUrl: screenshot.dataUrl },
@@ -321,6 +324,8 @@ const actionClasses: Record<string, AgentActionClass> = {
   submit_form: "form-submit",
   fill_credential: "credential-fill",
 };
+
+const normalizeToolName = (value: string): string => value.replace(/^(?:browser|ai_browser)\./, "");
 
 const stringSchema = (description: string, maxLength?: number): JsonObject => ({ type: "string", description, ...(maxLength ? { maxLength } : {}) });
 const objectSchema = (properties: JsonObject, required: string[] = []): JsonObject => ({ type: "object", properties, required, additionalProperties: false });
