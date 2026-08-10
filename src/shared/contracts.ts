@@ -22,6 +22,8 @@ export type Tab = {
   status: TabStatus;
   createdAt: string;
   lastActiveAt: string;
+  /** Ephemeral runtime marker; never persisted. */
+  agentLock?: { threadId: string };
 };
 
 export type Bookmark = {
@@ -86,6 +88,17 @@ export type BrowserViewportBounds = {
   height: number;
 };
 
+export type BrowserSecurityStatus = "secure" | "not-secure" | "special";
+
+export type BrowserRuntimeStatus = {
+  activeTabId: string | null;
+  memoryUsageMb: number | null;
+  security: BrowserSecurityStatus;
+  securityMessage: string;
+  loading: boolean;
+  sampledAt: string;
+};
+
 export type BrowserCommand =
   | { type: "space.create"; name?: string; color?: string; icon?: string }
   | { type: "space.rename"; spaceId: string; name: string }
@@ -120,6 +133,7 @@ export type CommandResult =
 
 export type BrowserEvent =
   | { type: "snapshot"; snapshot: AppSnapshot }
+  | { type: "runtime-status"; status: BrowserRuntimeStatus }
   | { type: "credential-save-request"; request: CredentialSaveRequest }
   | { type: "toast"; tone: "info" | "success" | "error"; message: string };
 
