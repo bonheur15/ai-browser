@@ -674,6 +674,7 @@ function AgentCommandCenter({
   const [showThreads, setShowThreads] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const dragRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.activeThreadId);
   const policy = thread?.policy ?? snapshot.globalDefaults;
@@ -703,6 +704,18 @@ function AgentCommandCenter({
     window.addEventListener("pointermove", onPointerMove); window.addEventListener("pointerup", stopDrag);
   };
   useEffect(() => () => stopDrag(), []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  useEffect(() => {
+    if (!thread) return;
+    const focusFrame = window.requestAnimationFrame(() => composerRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [thread?.id]);
 
   return (
     <aside
@@ -732,7 +745,7 @@ function AgentCommandCenter({
             <div className="agent-context-line"><span className="context-pulse" />Using <strong>{activeTab?.title || "current browser context"}</strong><small>{activeTab?.agentLock ? "protected" : "context shared"}</small></div>
             <div className="agent-conversation" aria-live="polite">{snapshot.messages.length === 0 && <div className="agent-welcome"><span className="agent-welcome-mark">✦</span><div><strong>What should I take care of?</strong><p>Research, compare, fill, organize — you stay in control of approvals and sensitive actions.</p></div></div>}{snapshot.messages.map((message) => <div className={`agent-message agent-message-${message.role}`} key={message.id}><span className="agent-message-mark">{message.role === "user" ? "You" : message.role === "assistant" ? "AI" : "·"}</span><div className="agent-message-body"><p>{message.text || "…"}</p>{message.evidenceIds && <div className="agent-evidence-list">{message.evidenceIds.map((id) => <EvidencePreview id={id} key={id} />)}</div>}</div></div>)}{snapshot.approvalRequests.map((request) => <div className="agent-approval" key={request.id}><span className="eyebrow">NEEDS YOUR APPROVAL</span><strong>{request.summary}</strong><small>{request.actionClass.replace(/-/g, " ")}{request.tabId && tabMap.get(request.tabId) ? ` · ${tabMap.get(request.tabId)?.title}` : ""}</small><div><button type="button" onClick={() => onDispatch({ type: "agent.approval.respond", threadId: request.threadId, approvalId: request.id, approved: true })}>Allow once</button><button type="button" onClick={() => onDispatch({ type: "agent.approval.respond", threadId: request.threadId, approvalId: request.id, approved: false })}>Deny</button></div></div>)}</div>
             {snapshot.actions.length > 0 && <div className="agent-trace"><div className="agent-trace-heading"><span>LIVE ACTIVITY</span><small>{snapshot.actions.length} actions</small></div>{snapshot.actions.slice(-4).map((action) => <button type="button" className="agent-trace-row" key={action.id} onClick={() => action.tabId && onActivateTab(action.tabId)}><i className={`trace-status trace-${action.status}`} /><span>{action.summary}</span><small>{action.status}</small></button>)}</div>}
-            <form className="agent-composer" onSubmit={(event) => { event.preventDefault(); send(); }}><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); send(); } }} placeholder={policy.mode === "observe" ? "Ask me to inspect…" : "Tell me what to do…"} aria-label="Message the agent" rows={2} /><button type="submit" disabled={!input.trim() || isRunning}>Run <span>↗</span></button><small>⌘↵ to run · {snapshot.connection.status === "ready" ? "connected" : snapshot.connection.status}</small></form>
+            <form className="agent-composer" onSubmit={(event) => { event.preventDefault(); send(); }}><textarea ref={composerRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); send(); } }} placeholder={policy.mode === "observe" ? "Ask me to inspect…" : "Tell me what to do…"} aria-label="Message the agent" rows={2} /><button type="submit" disabled={!input.trim() || isRunning}>Run <span>↗</span></button><small>⌘↵ to run · {snapshot.connection.status === "ready" ? "connected" : snapshot.connection.status}</small></form>
           </>}
         </section>
       </div>
@@ -866,7 +879,7 @@ function App() {
     <main className="app-shell" onClick={() => spaceMenuId && setSpaceMenuId(null)}>
       <div className="canvas">
         <SpaceRail snapshot={snapshot} onScope={selectScope} onCreate={() => setSpaceDialogOpen(true)} onPrivate={() => dispatch({ type: "space.createPrivate" })} onSpaceMenu={(spaceId) => { setSpaceMenuId(spaceId); }} menuSpaceId={spaceMenuId} onRename={renameSpace} onDelete={deleteSpace} />
-        <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} maximized={maximized} agentOpen={agentOpen} onDispatch={dispatch} onOpenVault={() => { setAgentOpen(false); setDrawer(drawer === "vault" ? null : "vault"); }} onOpenSite={openSite} onToggleAgent={() => { setDrawer(null); setAgentOpen((current) => !current); }} onToggleMaximize={() => { window.windowControls?.toggleMaximize(); setMaximized((current) => !current); }} />
+        <CommandDock snapshot={{ ...snapshot, drawer }} activeTab={activeTab} activeSpace={activeSpace} maximized={maximized} agentOpen={agentOpen} onDispatch={dispatch} onOpenVault={() => setDrawer(drawer === "vault" ? null : "vault")} onOpenSite={openSite} onToggleAgent={() => setAgentOpen((current) => !current)} onToggleMaximize={() => { window.windowControls?.toggleMaximize(); setMaximized((current) => !current); }} />
         <TabDeck tabs={visibleTabs} spaces={snapshot.spaces} activeTabId={snapshot.activeTabId} onActivate={(tabId) => tabId ? dispatch({ type: "tab.activate", tabId }) : dispatch({ type: "tab.create" })} onClose={(tabId) => dispatch({ type: "tab.close", tabId })} onHibernate={(tabId) => dispatch({ type: "tab.hibernate", tabId })} onMoveTab={(tabId, spaceId, clone) => dispatch(clone ? { type: "tab.cloneToSpace", tabId, spaceId } : { type: "tab.moveToSpace", tabId, spaceId })} />
         <div ref={viewportRef} className={`browser-viewport${drawer ? " has-drawer" : ""}`} aria-label="Browser surface"><div className="viewport-fallback"><span className="fallback-orb">✦</span><strong>Choose a surface</strong><small>Open a tab or select a Space to begin.</small></div></div>
         <BottomStatusToolbar snapshot={snapshot} runtimeStatus={runtimeStatus} agentSnapshot={agentSnapshot} activeTab={activeTab} activeSpace={activeSpace} />
