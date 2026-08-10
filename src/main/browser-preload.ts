@@ -1,5 +1,10 @@
 import { ipcRenderer } from "electron";
-import type { BrowserPageContext, BrowserPageElement, BrowserPageRequest, BrowserPageResponse } from "../shared/agent-contracts";
+import type {
+  BrowserPageContext,
+  BrowserPageElement,
+  BrowserPageRequest,
+  BrowserPageResponse,
+} from "../shared/agent-contracts";
 
 type FillCredential = {
   requestId: string;
@@ -17,7 +22,9 @@ let screenshotContextId: string | null = null;
 
 const visible = (element: Element): boolean => {
   const style = window.getComputedStyle(element);
-  return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+  return (
+    style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0
+  );
 };
 
 const inputsIn = (root: ParentNode): HTMLInputElement[] =>
@@ -27,10 +34,15 @@ const textValue = (value: string | null | undefined, limit = 180): string =>
   (value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
 
 const elementLabel = (element: Element): string => {
-  const explicit = element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("placeholder");
+  const explicit =
+    element.getAttribute("aria-label") ||
+    element.getAttribute("title") ||
+    element.getAttribute("placeholder");
   if (explicit) return textValue(explicit);
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    const label = element.id ? document.querySelector(`label[for="${CSS.escape(element.id)}"]`) : null;
+    const label = element.id
+      ? document.querySelector(`label[for="${CSS.escape(element.id)}"]`)
+      : null;
     if (label?.textContent) return textValue(label.textContent);
     if (element.name) return textValue(element.name);
   }
@@ -55,48 +67,79 @@ const elementRole = (element: Element): string => {
 
 const elementValueKind = (element: Element): BrowserPageElement["valueKind"] => {
   if (element instanceof HTMLInputElement) {
-    if (element.type === "checkbox" || element.type === "radio") return element.checked ? "checked" : "unchecked";
+    if (element.type === "checkbox" || element.type === "radio")
+      return element.checked ? "checked" : "unchecked";
     return element.value ? "filled" : "empty";
   }
-  if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) return element.value ? "filled" : "empty";
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement)
+    return element.value ? "filled" : "empty";
   return undefined;
 };
 
 const interactiveElements = (): Element[] => {
-  const candidates = [...document.querySelectorAll<Element>("a,button,input,textarea,select,form,[role='button'],[role='link'],[contenteditable='true'],[tabindex]")];
+  const candidates = [
+    ...document.querySelectorAll<Element>(
+      "a,button,input,textarea,select,form,[role='button'],[role='link'],[contenteditable='true'],[tabindex]",
+    ),
+  ];
   const seen = new Set<Element>();
-  return candidates.filter((element) => {
-    if (seen.has(element) || !visible(element as HTMLElement)) return false;
-    seen.add(element);
-    return true;
-  }).slice(0, 140);
+  return candidates
+    .filter((element) => {
+      if (seen.has(element) || !visible(element as HTMLElement)) return false;
+      seen.add(element);
+      return true;
+    })
+    .slice(0, 140);
 };
 
 const rectFor = (element: Element): { x: number; y: number; width: number; height: number } => {
   const rect = element.getBoundingClientRect();
-  return { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) };
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
 };
 
-const sensitiveElements = (): Element[] => [...document.querySelectorAll<Element>(
-  "input[type='password'], input[autocomplete*='password'], input[autocomplete*='cc-'], input[name*='card' i], input[name*='cvv' i], input[name*='cvc' i], input[name*='otp' i], input[name*='code' i]",
-)].filter((element) => visible(element as HTMLElement));
+const sensitiveElements = (): Element[] =>
+  [
+    ...document.querySelectorAll<Element>(
+      "input[type='password'], input[autocomplete*='password'], input[autocomplete*='cc-'], input[name*='card' i], input[name*='cvv' i], input[name*='cvc' i], input[name*='otp' i], input[name*='code' i]",
+    ),
+  ].filter((element) => visible(element as HTMLElement));
 
 const captchaWidgets = (): BrowserPageContext["captchaWidgets"] => {
-  const candidates = [...document.querySelectorAll<Element>(
-    "iframe, .g-recaptcha, [data-sitekey], [class*='recaptcha' i], [id*='recaptcha' i], [class*='hcaptcha' i], [id*='hcaptcha' i]",
-  )].filter((element) => visible(element as HTMLElement)).sort((a, b) => Number(b.tagName === "IFRAME") - Number(a.tagName === "IFRAME"));
+  const candidates = [
+    ...document.querySelectorAll<Element>(
+      "iframe, .g-recaptcha, [data-sitekey], [class*='recaptcha' i], [id*='recaptcha' i], [class*='hcaptcha' i], [id*='hcaptcha' i]",
+    ),
+  ]
+    .filter((element) => visible(element as HTMLElement))
+    .sort((a, b) => Number(b.tagName === "IFRAME") - Number(a.tagName === "IFRAME"));
   const seen = new Set<string>();
-  return candidates.flatMap((element) => {
-    const hint = `${element.getAttribute("src") ?? ""} ${element.getAttribute("title") ?? ""} ${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("class") ?? ""}`.toLowerCase();
-    const kind: BrowserPageContext["captchaWidgets"][number]["kind"] | null = /hcaptcha/.test(hint) ? "hcaptcha" : /recaptcha|google\.com\/recaptcha|recaptcha\.net/.test(hint) ? "recaptcha" : /captcha|data-sitekey/.test(hint) ? "captcha" : null;
-    if (!kind) return [];
-    const rect = rectFor(element);
-    if (rect.width < 20 || rect.height < 20) return [];
-    const key = `${kind}:${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
-    if (seen.has(key)) return [];
-    seen.add(key);
-    return [{ kind, rect, interaction: "checkbox-or-challenge" as const }];
-  }).slice(0, 8);
+  return candidates
+    .flatMap((element) => {
+      const hint =
+        `${element.getAttribute("src") ?? ""} ${element.getAttribute("title") ?? ""} ${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("class") ?? ""}`.toLowerCase();
+      const kind: BrowserPageContext["captchaWidgets"][number]["kind"] | null = /hcaptcha/.test(
+        hint,
+      )
+        ? "hcaptcha"
+        : /recaptcha|google\.com\/recaptcha|recaptcha\.net/.test(hint)
+          ? "recaptcha"
+          : /captcha|data-sitekey/.test(hint)
+            ? "captcha"
+            : null;
+      if (!kind) return [];
+      const rect = rectFor(element);
+      if (rect.width < 20 || rect.height < 20) return [];
+      const key = `${kind}:${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ kind, rect, interaction: "checkbox-or-challenge" as const }];
+    })
+    .slice(0, 8);
 };
 
 const createContext = (): BrowserPageContext => {
@@ -104,23 +147,33 @@ const createContext = (): BrowserPageContext => {
   screenshotContextId = screenshotContextActive ? snapshotId : null;
   const elements = interactiveElements();
   pageElementRefs = new Map(elements.map((element, index) => [`ref_${index + 1}`, element]));
-  const pageElements = elements.map((element, index): BrowserPageElement => ({
-    ref: `ref_${index + 1}`,
-    role: elementRole(element),
-    tag: element.tagName.toLowerCase(),
-    label: elementLabel(element),
-    placeholder: element.getAttribute("placeholder") || undefined,
-    valueKind: elementValueKind(element),
-    disabled: element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement
-      ? element.disabled
-      : element.getAttribute("aria-disabled") === "true",
-  }));
+  const pageElements = elements.map((element, index): BrowserPageElement => {
+    const placeholder = element.getAttribute("placeholder");
+    const valueKind = elementValueKind(element);
+    return {
+      ref: `ref_${index + 1}`,
+      role: elementRole(element),
+      tag: element.tagName.toLowerCase(),
+      label: elementLabel(element),
+      ...(placeholder ? { placeholder } : {}),
+      ...(valueKind ? { valueKind } : {}),
+      disabled:
+        element instanceof HTMLButtonElement ||
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement
+          ? element.disabled
+          : element.getAttribute("aria-disabled") === "true",
+    };
+  });
   const context: BrowserPageContext = {
     snapshotId,
     url: location.href,
     title: textValue(document.title, 200),
     text: textValue(document.body?.innerText, 12_000),
-    headings: [...document.querySelectorAll("h1,h2,h3")].map((heading) => textValue(heading.textContent, 160)).filter(Boolean).slice(0, 30),
+    headings: [...document.querySelectorAll("h1,h2,h3")]
+      .map((heading) => textValue(heading.textContent, 160))
+      .filter(Boolean)
+      .slice(0, 30),
     elements: pageElements,
     scroll: {
       x: Math.round(window.scrollX),
@@ -151,7 +204,10 @@ const elementForRef = (snapshotId: string, ref: string): Element | null => {
 };
 
 const dispatchInput = (element: HTMLInputElement | HTMLTextAreaElement, value: string): void => {
-  const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const prototype =
+    element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
   setter?.call(element, value);
   element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -186,18 +242,24 @@ const applyRedaction = (enabled: boolean): void => {
   }
 };
 
-const findUsername = (inputs: HTMLInputElement[], password: HTMLInputElement): HTMLInputElement | undefined => {
+const findUsername = (
+  inputs: HTMLInputElement[],
+  password: HTMLInputElement,
+): HTMLInputElement | undefined => {
   const preferred = inputs.find((input) => {
     const hint = `${input.name} ${input.id} ${input.autocomplete}`.toLowerCase();
     return input !== password && /user|email|login|account/.test(hint);
   });
-  return preferred ?? inputs.find((input) => input !== password && ["text", "email", "tel"].includes(input.type));
+  return (
+    preferred ??
+    inputs.find((input) => input !== password && ["text", "email", "tel"].includes(input.type))
+  );
 };
 
 const reportLoginCandidate = (root: ParentNode = document): void => {
   const inputs = inputsIn(root);
   const password = inputs.find((input) => input.type === "password" && input.value);
-  if (!password || !password.value || !location.origin.startsWith("http")) return;
+  if (!password?.value || !location.origin.startsWith("http")) return;
 
   const username = findUsername(inputs, password)?.value.trim() ?? "";
   const candidateKey = `${location.origin}|${username}`;
@@ -218,7 +280,8 @@ const formFor = (element: Element): HTMLFormElement | null => element.closest("f
 
 const likelyLoginAction = (element: Element): boolean => {
   if (element instanceof HTMLInputElement && element.type === "submit") return true;
-  const label = `${element.textContent ?? ""} ${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""}`.toLowerCase();
+  const label =
+    `${element.textContent ?? ""} ${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""}`.toLowerCase();
   return /sign\s*in|log\s*in|login|continue|submit|connect|next|enter/.test(label);
 };
 
@@ -241,22 +304,35 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
     }
 
     if (request.type === "redact") {
-      if (!pageSnapshot || pageSnapshot.snapshotId !== request.snapshotId) throw new Error("Page context expired");
+      if (!pageSnapshot || pageSnapshot.snapshotId !== request.snapshotId)
+        throw new Error("Page context expired");
       applyRedaction(request.enabled);
       if (request.enabled) {
         screenshotContextActive = true;
         screenshotContextId = request.snapshotId;
       }
-      pageResponse({ requestId: request.requestId, ok: true, result: { redacted: request.enabled } });
+      pageResponse({
+        requestId: request.requestId,
+        ok: true,
+        result: { redacted: request.enabled },
+      });
       return;
     }
 
     if (request.type === "click") {
-      if (!request.ref && screenshotContextId !== request.snapshotId) throw new Error("Coordinate clicks require a recent screenshot context");
-      const target = request.ref ? elementForRef(request.snapshotId, request.ref) : document.elementFromPoint(request.x ?? 0, request.y ?? 0);
-      if (!(target instanceof HTMLElement) || !visible(target)) throw new Error("The requested page element is not visible");
+      if (!request.ref && screenshotContextId !== request.snapshotId)
+        throw new Error("Coordinate clicks require a recent screenshot context");
+      const target = request.ref
+        ? elementForRef(request.snapshotId, request.ref)
+        : document.elementFromPoint(request.x ?? 0, request.y ?? 0);
+      if (!(target instanceof HTMLElement) || !visible(target))
+        throw new Error("The requested page element is not visible");
       target.click();
-      pageResponse({ requestId: request.requestId, ok: true, result: { label: elementLabel(target), role: elementRole(target) } });
+      pageResponse({
+        requestId: request.requestId,
+        ok: true,
+        result: { label: elementLabel(target), role: elementRole(target) },
+      });
       invalidatePageContext();
       return;
     }
@@ -266,51 +342,97 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
       if (!target) throw new Error("The requested element cannot receive text");
       const text = request.text.slice(0, 20_000);
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        if (target instanceof HTMLInputElement && /password|hidden|cc-|otp|one-time|security/i.test(`${target.type} ${target.autocomplete} ${target.name}`)) {
+        if (
+          target instanceof HTMLInputElement &&
+          /password|hidden|cc-|otp|one-time|security/i.test(
+            `${target.type} ${target.autocomplete} ${target.name}`,
+          )
+        ) {
           throw new Error("Secret fields must be filled through the Vault");
         }
         dispatchInput(target, request.replace ? text : `${target.value}${text}`);
       } else if (target instanceof HTMLElement && target.isContentEditable) {
         if (request.replace) target.textContent = "";
         target.textContent = `${target.textContent ?? ""}${text}`;
-        target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+        target.dispatchEvent(
+          new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }),
+        );
       } else throw new Error("The requested element cannot receive text");
-      pageResponse({ requestId: request.requestId, ok: true, result: { label: elementLabel(target), characters: text.length } });
+      pageResponse({
+        requestId: request.requestId,
+        ok: true,
+        result: { label: elementLabel(target), characters: text.length },
+      });
       invalidatePageContext();
       return;
     }
 
     if (request.type === "select") {
       const target = elementForRef(request.snapshotId, request.ref);
-      if (!(target instanceof HTMLSelectElement)) throw new Error("The requested element is not a select menu");
-      const option = [...target.options].find((candidate) => request.value ? candidate.value === request.value : candidate.textContent?.trim() === request.label?.trim());
+      if (!(target instanceof HTMLSelectElement))
+        throw new Error("The requested element is not a select menu");
+      const option = [...target.options].find((candidate) =>
+        request.value
+          ? candidate.value === request.value
+          : candidate.textContent?.trim() === request.label?.trim(),
+      );
       if (!option) throw new Error("The requested select option was not found");
       target.value = option.value;
       target.dispatchEvent(new Event("input", { bubbles: true }));
       target.dispatchEvent(new Event("change", { bubbles: true }));
-      pageResponse({ requestId: request.requestId, ok: true, result: { label: elementLabel(target), selected: option.textContent?.trim() ?? "" } });
+      pageResponse({
+        requestId: request.requestId,
+        ok: true,
+        result: { label: elementLabel(target), selected: option.textContent?.trim() ?? "" },
+      });
       invalidatePageContext();
       return;
     }
 
     if (request.type === "press") {
-      const target = request.ref ? elementForRef(request.snapshotId, request.ref) : document.activeElement;
+      const target = request.ref
+        ? elementForRef(request.snapshotId, request.ref)
+        : document.activeElement;
       if (!(target instanceof HTMLElement)) throw new Error("No page element is focused");
       target.focus();
-      const init = { key: request.key.slice(0, 40), code: request.key.slice(0, 40), bubbles: true, cancelable: true };
+      const init = {
+        key: request.key.slice(0, 40),
+        code: request.key.slice(0, 40),
+        bubbles: true,
+        cancelable: true,
+      };
       target.dispatchEvent(new KeyboardEvent("keydown", init));
       target.dispatchEvent(new KeyboardEvent("keyup", init));
-      pageResponse({ requestId: request.requestId, ok: true, result: { key: init.key, label: elementLabel(target) } });
+      pageResponse({
+        requestId: request.requestId,
+        ok: true,
+        result: { key: init.key, label: elementLabel(target) },
+      });
       invalidatePageContext();
       return;
     }
 
     if (request.type === "scroll") {
-      if (!pageSnapshot || pageSnapshot.snapshotId !== request.snapshotId) throw new Error("Page context expired");
+      if (!pageSnapshot || pageSnapshot.snapshotId !== request.snapshotId)
+        throw new Error("Page context expired");
       const target = request.ref ? elementForRef(request.snapshotId, request.ref) : null;
-      if (target instanceof HTMLElement) target.scrollBy({ left: Math.max(-2000, Math.min(2000, request.x)), top: Math.max(-2000, Math.min(2000, request.y)), behavior: "auto" });
-      else window.scrollBy({ left: Math.max(-2000, Math.min(2000, request.x)), top: Math.max(-2000, Math.min(2000, request.y)), behavior: "auto" });
-      pageResponse({ requestId: request.requestId, ok: true, result: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) } });
+      if (target instanceof HTMLElement)
+        target.scrollBy({
+          left: Math.max(-2000, Math.min(2000, request.x)),
+          top: Math.max(-2000, Math.min(2000, request.y)),
+          behavior: "auto",
+        });
+      else
+        window.scrollBy({
+          left: Math.max(-2000, Math.min(2000, request.x)),
+          top: Math.max(-2000, Math.min(2000, request.y)),
+          behavior: "auto",
+        });
+      pageResponse({
+        requestId: request.requestId,
+        ok: true,
+        result: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
+      });
       invalidatePageContext();
       return;
     }
@@ -318,42 +440,65 @@ const handlePageRequest = (request: BrowserPageRequest): void => {
     if (request.type === "submit") {
       const target = elementForRef(request.snapshotId, request.ref);
       const form = target instanceof HTMLFormElement ? target : target?.closest("form");
-      if (!(form instanceof HTMLFormElement)) throw new Error("The requested element has no form to submit");
+      if (!(form instanceof HTMLFormElement))
+        throw new Error("The requested element has no form to submit");
       form.requestSubmit();
       pageResponse({ requestId: request.requestId, ok: true, result: { submitted: true } });
       invalidatePageContext();
     }
   } catch (error: unknown) {
-    pageResponse({ requestId: request.requestId, ok: false, error: error instanceof Error ? error.message : "The page action failed" });
+    pageResponse({
+      requestId: request.requestId,
+      ok: false,
+      error: error instanceof Error ? error.message : "The page action failed",
+    });
   }
 };
 
-document.addEventListener("submit", (event) => {
-  const form = event.target instanceof HTMLFormElement ? event.target : null;
-  if (form) reportLoginCandidate(form);
-}, true);
+document.addEventListener(
+  "submit",
+  (event) => {
+    const form = event.target instanceof HTMLFormElement ? event.target : null;
+    if (form) reportLoginCandidate(form);
+  },
+  true,
+);
 
-document.addEventListener("click", (event) => {
-  const target = event.target instanceof Element
-    ? event.target.closest("button, input[type='submit'], input[type='button'], [role='button']")
-    : null;
-  if (!target || !likelyLoginAction(target)) return;
-  const root = formFor(target) ?? document;
-  reportLoginCandidate(root);
-  window.setTimeout(() => reportLoginCandidate(root), 0);
-}, true);
+document.addEventListener(
+  "click",
+  (event) => {
+    const target =
+      event.target instanceof Element
+        ? event.target.closest(
+            "button, input[type='submit'], input[type='button'], [role='button']",
+          )
+        : null;
+    if (!target || !likelyLoginAction(target)) return;
+    const root = formFor(target) ?? document;
+    reportLoginCandidate(root);
+    window.setTimeout(() => reportLoginCandidate(root), 0);
+  },
+  true,
+);
 
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement)) return;
-  const root = formFor(event.target) ?? document;
-  window.setTimeout(() => reportLoginCandidate(root), 0);
-}, true);
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement)) return;
+    const root = formFor(event.target) ?? document;
+    window.setTimeout(() => reportLoginCandidate(root), 0);
+  },
+  true,
+);
 
 ipcRenderer.on("browser:fill-credential", (_event, credential: FillCredential) => {
   const inputs = [...document.querySelectorAll<HTMLInputElement>("input")].filter(visible);
   const password = inputs.find((input) => input.type === "password");
   if (!password) {
-    ipcRenderer.send("browser:credential-fill-result", { requestId: credential.requestId, ok: false });
+    ipcRenderer.send("browser:credential-fill-result", {
+      requestId: credential.requestId,
+      ok: false,
+    });
     return;
   }
 
