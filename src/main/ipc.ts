@@ -29,6 +29,8 @@ const COMMAND_TYPES = new Set([
   "credential.reject",
   "credential.fill",
   "credential.remove",
+  "settings.updateAppearance",
+  "settings.resetAppearance",
 ]);
 
 export const registerBrowserIPC = (window: BaseWindow, runtime: BrowserRuntime): void => {
