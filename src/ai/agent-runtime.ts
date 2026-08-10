@@ -117,6 +117,7 @@ export class AgentRuntime {
         if (thread && ["starting", "running", "waiting-for-approval"].includes(thread.status)) {
           this.state.updateThread(command.threadId, { status: "error" });
         }
+        this.browser.releaseAgentTabLocks(command.threadId);
       }
       this.emit({ type: "agent.error", threadId: "threadId" in command ? command.threadId : undefined, message });
       return { ok: false, error: message, snapshot: this.snapshot() };
@@ -279,6 +280,7 @@ export class AgentRuntime {
     this.stopApprovals(threadId);
     if (turnId) await this.client.request("turn/interrupt", { threadId: thread.codexThreadId, turnId });
     this.state.updateThread(threadId, { status });
+    this.browser.releaseAgentTabLocks(threadId);
   }
 
   private async handleServerRequest(request: CodexServerRequest): Promise<unknown> {
@@ -349,6 +351,7 @@ export class AgentRuntime {
       ...(input.status !== "running" ? { completedAt: new Date().toISOString() } : {}),
     } as const;
     this.state.upsertAction(action);
+    if (input.tabId) this.browser.setAgentTabLock(input.tabId, threadId, input.status === "running");
     this.emit({ type: "agent.action", action });
     if (input.status !== "running") this.runningActionIds.delete(threadId);
     this.publish();
@@ -392,6 +395,7 @@ export class AgentRuntime {
       this.turnIds.delete(thread.id);
       this.stopApprovals(thread.id);
       this.state.updateThread(thread.id, { status: next });
+      this.browser.releaseAgentTabLocks(thread.id);
       this.publish();
       return;
     }
@@ -399,6 +403,7 @@ export class AgentRuntime {
     if (notification.method === "error") {
       const message = stringValue(params.message) ?? "Codex reported an error";
       this.state.updateThread(thread.id, { status: "error" });
+      this.browser.releaseAgentTabLocks(thread.id);
       this.state.appendMessage({ threadId: thread.id, role: "system", kind: "error", text: message.slice(0, 500) });
       this.emit({ type: "agent.error", threadId: thread.id, message: message.slice(0, 500) });
       this.publish();
