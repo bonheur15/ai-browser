@@ -3,6 +3,7 @@
   "bootstrap-sha": "c4cac04f25742ae4d931798ced5e29eaf8e1c9b0",
   "release-type": "node",
   "include-v-in-tag": true,
+  "include-component-in-tag": false,
   "draft": true,
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
