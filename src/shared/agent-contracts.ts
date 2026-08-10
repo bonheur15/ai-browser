@@ -110,6 +110,8 @@ export type AgentSnapshot = {
 };
 
 export type AgentCommand =
+  | { type: "agent.defaults.update"; policy: AgentPolicy }
+  | { type: "agent.defaults.reset" }
   | { type: "agent.thread.create"; title?: string }
   | { type: "agent.thread.select"; threadId: string }
   | { type: "agent.thread.rename"; threadId: string; title: string }
