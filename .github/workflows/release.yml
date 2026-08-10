@@ -184,6 +184,9 @@ jobs:
             args+=(--config.mac.notarize=true)
           fi
           npm run dist:mac -- "${args[@]}"
+      - name: Smoke test packaged Linux app
+        if: matrix.platform == 'linux'
+        run: npm run smoke:package:linux
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.platform }}-x64
@@ -223,7 +226,7 @@ jobs:
           npm sbom --package-lock-only --omit=dev --sbom-format=spdx --sbom-type=application > "artifacts/AI-Browser-${version}.spdx.json"
           (
             cd artifacts
-            find . -maxdepth 1 -type f ! -name '*SHA256SUMS*' -print0 | sort -z | xargs -0 sha256sum
+            find . -maxdepth 1 -type f ! -name '*SHA256SUMS*' -printf '%f\0' | sort -z | xargs -0 sha256sum
           ) > "artifacts/AI-Browser-${TAG}-SHA256SUMS.txt"
       - name: Attest release provenance
         uses: actions/attest@v4
