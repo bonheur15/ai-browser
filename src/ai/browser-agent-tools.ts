@@ -5,6 +5,7 @@ import type {
   BrowserPageRequestInput,
 } from "../shared/agent-contracts";
 import type { Tab } from "../shared/contracts";
+import type { AgentMemoryStore } from "./agent-memory-store";
 import type { AgentPolicyEngine, PolicyDecision } from "./agent-policy";
 import { browserDynamicTools } from "./codex-app-server-client";
 import type { CodexServerRequest, DynamicToolNamespace, JsonObject } from "./codex-protocol";
@@ -99,6 +100,7 @@ export class BrowserAgentTools {
   constructor(
     private readonly browser: BrowserRuntime,
     private readonly policies: AgentPolicyEngine,
+    private readonly memory?: AgentMemoryStore,
   ) {
     this.namespace = browserDynamicTools(toolDefinitions);
   }
@@ -121,6 +123,13 @@ export class BrowserAgentTools {
     const normalized = normalizeToolName(toolName);
     let actionClass = this.actionClass(toolName);
     const args = objectValue(request.params?.arguments ?? {});
+    if (normalized === "memory_search") {
+      if (!this.memory) return failure("Long-term memory is unavailable");
+      const query = text(args.query, "query", 2_000);
+      const limit = typeof args.limit === "number" ? numberValue(args.limit, "limit", 1, 10) : 5;
+      const hits = await this.memory.search(_threadId, query, limit);
+      return success({ type: "inputText", text: JSON.stringify({ query, hits }) });
+    }
     let target: { tab?: Tab; spaceId?: string; url?: string } = {};
     let summary = normalized.replace(/_/g, " ");
     try {
@@ -551,6 +560,7 @@ const actionClasses: Record<string, AgentActionClass> = {
   get_page_context: "read",
   capture_screenshot: "read",
   list_credentials: "read",
+  memory_search: "read",
   create_tab: "tab-management",
   close_tab: "destructive",
   activate_tab: "tab-management",
@@ -584,6 +594,18 @@ const objectSchema = (properties: JsonObject, required: string[] = []): JsonObje
 });
 
 const toolDefinitions = [
+  {
+    name: "memory_search",
+    description:
+      "Search this goal's durable memory. Original transcripts are retained in an archive; use this when older decisions, URLs, or action results are relevant.",
+    inputSchema: objectSchema(
+      {
+        query: stringSchema("Words or facts to find", 2_000),
+        limit: { type: "number", minimum: 1, maximum: 10 },
+      },
+      ["query"],
+    ),
+  },
   {
     name: "list_spaces",
     description: "List Spaces available to this thread.",
