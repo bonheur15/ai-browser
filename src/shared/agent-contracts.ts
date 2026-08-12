@@ -31,6 +31,42 @@ export type AgentRunStatus =
   | "stopped"
   | "error";
 
+export type AgentActivity =
+  | { kind: "idle"; label: string }
+  | { kind: "thinking"; label: string; since: string }
+  | { kind: "browser"; label: string; since: string; tabId?: string }
+  | { kind: "approval"; label: string; since: string }
+  | { kind: "sleeping"; label: string; until: string }
+  | { kind: "paused"; label: string }
+  | { kind: "completed"; label: string }
+  | { kind: "error"; label: string };
+
+export type AgentGoalStatus =
+  | "draft"
+  | "running"
+  | "sleeping"
+  | "paused"
+  | "completed"
+  | "error"
+  | "stopped";
+
+export type AgentGoal = {
+  id: string;
+  threadId: string;
+  title: string;
+  objective: string;
+  status: AgentGoalStatus;
+  createdAt: string;
+  updatedAt: string;
+  endsAt: string | null;
+  wakeAt: string | null;
+  iteration: number;
+  maxIterations: number;
+  allowedOrigins: string[] | null;
+  lastCheckpoint: string | null;
+  lastAction: string | null;
+};
+
 export type AgentThread = {
   id: string;
   title: string;
@@ -107,9 +143,27 @@ export type AgentSnapshot = {
   approvalRequests: AgentApprovalRequest[];
   modelOptions: AgentModelOption[];
   globalDefaults: AgentPolicy;
+  goals: AgentGoal[];
+  activeActivity: AgentActivity;
 };
 
-export type AgentCommand =
+export type AgentGoalCommand =
+  | {
+      type: "agent.goal.create";
+      threadId: string;
+      title?: string;
+      objective: string;
+      endsAt?: string | null;
+      maxIterations?: number;
+    }
+  | { type: "agent.goal.start"; goalId: string }
+  | { type: "agent.goal.pause"; goalId: string }
+  | { type: "agent.goal.stop"; goalId: string }
+  | { type: "agent.goal.sleep"; goalId: string; until: string };
+
+export type AgentCommand = AgentCommandBase | AgentGoalCommand;
+
+type AgentCommandBase =
   | { type: "agent.defaults.update"; policy: AgentPolicy }
   | { type: "agent.defaults.reset" }
   | { type: "agent.thread.create"; title?: string }
@@ -155,12 +209,13 @@ export type AgentPersistedThread = AgentThread & {
 };
 
 export type AgentPersistedState = {
-  version: 1;
+  version: 2;
   threads: AgentPersistedThread[];
   messages: AgentMessage[];
   actions: AgentActionTrace[];
   activeThreadId: string | null;
   globalDefaults: AgentPolicy;
+  goals: AgentGoal[];
 };
 
 export type BrowserPageElement = {
