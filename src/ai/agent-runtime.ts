@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserRuntime } from "../main/browser-runtime";
 import type {
+  AgentActivity,
   AgentAPI,
   AgentApprovalRequest,
   AgentCommand,
@@ -12,6 +13,7 @@ import type {
 } from "../shared/agent-contracts";
 import { isJsonObject, type JsonObject, type JsonValue } from "../shared/json";
 import type { AgentEvidenceStore } from "./agent-evidence-store";
+import type { AgentMemoryStore } from "./agent-memory-store";
 import { AgentPolicyEngine, isAgentPolicy } from "./agent-policy";
 import { type AgentStateStore, defaultAgentPolicy, normalizePolicy } from "./agent-state-store";
 import { BrowserAgentTools } from "./browser-agent-tools";
@@ -50,15 +52,18 @@ export class AgentRuntime {
   private readonly explicitRunStatus = new Map<string, "paused" | "stopped">();
   private models: ReturnType<typeof modelOption>[] = [];
   private connection: AgentConnection = { status: "stopped" };
+  private activity: AgentActivity = { kind: "idle", label: "Ready" };
+  private readonly goalTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly browser: BrowserRuntime,
     private readonly state: AgentStateStore,
     private readonly evidence: AgentEvidenceStore,
+    private readonly memory: AgentMemoryStore,
     private readonly emit: (event: AgentEvent) => void,
   ) {
     this.policies = new AgentPolicyEngine(() => this.browser.snapshot());
-    this.tools = new BrowserAgentTools(this.browser, this.policies);
+    this.tools = new BrowserAgentTools(this.browser, this.policies, this.memory);
     this.client = new CodexAppServerClient({
       onNotification: (notification) => this.handleNotification(notification),
       onServerRequest: (request) => this.handleServerRequest(request),
@@ -101,6 +106,8 @@ export class AgentRuntime {
         .map((pending) => structuredClone(pending.request)),
       modelOptions: structuredClone(this.models),
       globalDefaults: structuredClone(state.globalDefaults),
+      goals: this.state.getGoals(),
+      activeActivity: structuredClone(this.activity),
     };
   }
 
@@ -143,10 +150,15 @@ export class AgentRuntime {
 
   async initialize(): Promise<void> {
     // The Codex process is intentionally lazy. Opening the browser never starts a model process.
-    await Promise.resolve();
+    await this.memory.initialize();
+    for (const goal of this.state.getGoals()) {
+      if (goal.status === "sleeping" && goal.wakeAt) this.sleepGoal(goal.id, goal.wakeAt);
+    }
   }
 
   async shutdown(): Promise<void> {
+    for (const timer of this.goalTimers.values()) clearTimeout(timer);
+    this.goalTimers.clear();
     for (const pending of this.pendingApprovals.values()) pending.resolve(false);
     this.pendingApprovals.clear();
     await this.client.stop();
@@ -231,6 +243,34 @@ export class AgentRuntime {
       case "agent.approval.respond":
         this.respondToApproval(command.approvalId, command.approved);
         return;
+      case "agent.goal.create": {
+        if (!command.objective.trim()) throw new Error("Goal objective cannot be empty");
+        const thread = this.state.getThread(command.threadId);
+        if (!thread) throw new Error("Agent thread not found");
+        this.state.createGoal({
+          threadId: command.threadId,
+          title: command.title?.trim().slice(0, 80) || safeTitle(command.objective),
+          objective: command.objective.trim().slice(0, 20_000),
+          status: "draft",
+          endsAt: command.endsAt ?? null,
+          wakeAt: null,
+          maxIterations: Math.min(10_000, Math.max(1, Math.floor(command.maxIterations ?? 100))),
+          allowedOrigins: thread.policy.allowedOrigins,
+        });
+        return;
+      }
+      case "agent.goal.start":
+        await this.startGoal(command.goalId);
+        return;
+      case "agent.goal.pause":
+        this.pauseGoal(command.goalId, "paused");
+        return;
+      case "agent.goal.stop":
+        this.pauseGoal(command.goalId, "stopped");
+        return;
+      case "agent.goal.sleep":
+        this.sleepGoal(command.goalId, command.until);
+        return;
     }
   }
 
@@ -312,6 +352,11 @@ export class AgentRuntime {
     const thread = this.state.getThread(threadId);
     if (!thread?.codexThreadId) throw new Error("The Codex thread is not ready");
     this.state.updateThread(threadId, { status: "running" });
+    this.setActivity({
+      kind: "thinking",
+      label: continuation ? "Continuing goal" : "Thinking",
+      since: new Date().toISOString(),
+    });
     const response = await this.client.request<JsonObject>("turn/start", {
       threadId: thread.codexThreadId,
       input,
@@ -343,6 +388,10 @@ export class AgentRuntime {
       await this.client.request("turn/interrupt", { threadId: thread.codexThreadId, turnId });
     this.state.updateThread(threadId, { status });
     this.browser.releaseAgentTabLocks(threadId);
+    this.setActivity({
+      kind: status === "paused" ? "paused" : "idle",
+      label: status === "paused" ? "Paused" : "Ready",
+    });
   }
 
   private async handleServerRequest(request: CodexServerRequest): Promise<JsonValue> {
@@ -416,6 +465,11 @@ export class AgentRuntime {
       createdAt: new Date().toISOString(),
     };
     this.state.updateThread(threadId, { status: "waiting-for-approval" });
+    this.setActivity({
+      kind: "approval",
+      label: "Waiting for approval",
+      since: new Date().toISOString(),
+    });
     this.pendingApprovals.set(request.id, { request, resolve: () => undefined });
     const result = await new Promise<boolean>((resolve) => {
       const pending = this.pendingApprovals.get(request.id);
@@ -469,6 +523,13 @@ export class AgentRuntime {
       ...(input.status !== "running" ? { completedAt: new Date().toISOString() } : {}),
     } as const;
     this.state.upsertAction(action);
+    if (input.status === "running")
+      this.setActivity({
+        kind: "browser",
+        label: input.summary,
+        since: action.startedAt,
+        ...(input.tabId ? { tabId: input.tabId } : {}),
+      });
     if (input.tabId && input.actionClass !== "read")
       this.browser.setAgentTabLock(input.tabId, threadId, input.status === "running");
     this.emit({ type: "agent.action", action });
@@ -512,6 +573,7 @@ export class AgentRuntime {
       const turnId = stringValue(turn.id);
       if (turnId) this.turnIds.set(thread.id, turnId);
       this.state.updateThread(thread.id, { status: "running" });
+      this.setActivity({ kind: "thinking", label: "Thinking", since: new Date().toISOString() });
       this.publish();
       return;
     }
@@ -532,6 +594,11 @@ export class AgentRuntime {
       this.stopApprovals(thread.id);
       this.state.updateThread(thread.id, { status: next });
       this.browser.releaseAgentTabLocks(thread.id);
+      this.setActivity({
+        kind: next === "completed" ? "completed" : next === "error" ? "error" : "paused",
+        label: next === "completed" ? "Finished" : next === "error" ? "Run failed" : "Paused",
+      });
+      void this.advanceGoals(thread.id, next);
       this.publish();
       return;
     }
@@ -618,5 +685,109 @@ export class AgentRuntime {
 
   private publish(): void {
     this.emit({ type: "agent.snapshot", snapshot: this.snapshot() });
+  }
+
+  private setActivity(activity: AgentActivity): void {
+    this.activity = activity;
+    this.publish();
+  }
+
+  private async startGoal(goalId: string): Promise<void> {
+    const goal = this.state.getGoal(goalId);
+    if (!goal) throw new Error("Agent goal not found");
+    if (goal.status === "completed" || goal.status === "stopped")
+      throw new Error("This goal cannot be resumed");
+    if (goal.endsAt && Date.parse(goal.endsAt) <= Date.now()) {
+      this.state.updateGoal(goalId, { status: "completed" });
+      return;
+    }
+    const thread = this.state.getThread(goal.threadId);
+    if (!thread) throw new Error("The goal thread no longer exists");
+    this.state.updateGoal(goalId, { status: "running", wakeAt: null });
+    await this.ensureConnection();
+    await this.ensureRemoteThread(goal.threadId);
+    await this.sendTurn(
+      goal.threadId,
+      [
+        {
+          type: "text",
+          text: `Goal checkpoint ${goal.iteration + 1}/${goal.maxIterations}: ${goal.objective}. Continue only with allowed, policy-compliant browser actions. Report a concise checkpoint when this iteration is complete.`,
+        },
+      ],
+      true,
+    );
+  }
+
+  private pauseGoal(goalId: string, status: "paused" | "stopped"): void {
+    const goal = this.state.getGoal(goalId);
+    if (!goal) throw new Error("Agent goal not found");
+    const timer = this.goalTimers.get(goalId);
+    if (timer) clearTimeout(timer);
+    this.goalTimers.delete(goalId);
+    this.state.updateGoal(goalId, { status, wakeAt: null });
+    if (goal.status === "running")
+      void this.interrupt(goal.threadId, status === "paused" ? "paused" : "stopped");
+  }
+
+  private sleepGoal(goalId: string, until: string): void {
+    const timestamp = Date.parse(until);
+    if (!Number.isFinite(timestamp) || timestamp <= Date.now())
+      throw new Error("Sleep time must be a future ISO timestamp");
+    const goal = this.state.getGoal(goalId);
+    if (!goal) throw new Error("Agent goal not found");
+    const timer = this.goalTimers.get(goalId);
+    if (timer) clearTimeout(timer);
+    this.state.updateGoal(goalId, {
+      status: "sleeping",
+      wakeAt: new Date(timestamp).toISOString(),
+    });
+    this.setActivity({
+      kind: "sleeping",
+      label: "Sleeping until wake time",
+      until: new Date(timestamp).toISOString(),
+    });
+    this.goalTimers.set(
+      goalId,
+      setTimeout(
+        () => {
+          this.goalTimers.delete(goalId);
+          void this.startGoal(goalId).catch((error: unknown) =>
+            this.emit({
+              type: "agent.error",
+              threadId: goal.threadId,
+              message: error instanceof Error ? error.message : "Goal wake failed",
+            }),
+          );
+        },
+        Math.min(timestamp - Date.now(), 2_147_000_000),
+      ),
+    );
+  }
+
+  private async advanceGoals(threadId: string, runStatus: string): Promise<void> {
+    const goal = this.state
+      .getGoals()
+      .find((candidate) => candidate.threadId === threadId && candidate.status === "running");
+    if (!goal) return;
+    const nextIteration = goal.iteration + 1;
+    this.state.updateGoal(goal.id, {
+      iteration: nextIteration,
+      lastCheckpoint: new Date().toISOString(),
+      lastAction: this.state.getActions(threadId).at(-1)?.summary ?? null,
+    });
+    await this.memory.compact(
+      threadId,
+      this.state.getMessages(threadId),
+      this.state.getActions(threadId),
+    );
+    if (
+      runStatus !== "completed" ||
+      nextIteration >= goal.maxIterations ||
+      (goal.endsAt && Date.parse(goal.endsAt) <= Date.now())
+    ) {
+      this.state.updateGoal(goal.id, { status: runStatus === "completed" ? "completed" : "error" });
+      return;
+    }
+    await this.startGoal(goal.id);
   }
 }
