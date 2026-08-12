@@ -2291,8 +2291,8 @@ input:focus-visible {
   z-index: 1;
   inset: 16px;
   display: flex;
-  width: min(760px, calc(100% - 32px));
-  height: min(720px, calc(100% - 32px));
+  width: min(var(--agent-width, 760px), calc(100% - 32px));
+  height: min(var(--agent-height, 720px), calc(100% - 32px));
   min-width: 0;
   min-height: 0;
   margin: auto;
@@ -2331,8 +2331,66 @@ input:focus-visible {
   pointer-events: none;
 }
 .agent-center.is-expanded {
-  width: min(920px, calc(100% - 32px));
-  height: min(780px, calc(100% - 32px));
+  width: min(max(var(--agent-width, 920px), 920px), calc(100% - 32px));
+  height: min(max(var(--agent-height, 780px), 780px), calc(100% - 32px));
+}
+.agent-resize-handle {
+  position: absolute;
+  z-index: 8;
+  display: block;
+}
+.agent-resize-n,
+.agent-resize-s {
+  right: 20px;
+  left: 20px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.agent-resize-n {
+  top: 0;
+}
+.agent-resize-s {
+  bottom: 0;
+}
+.agent-resize-e,
+.agent-resize-w {
+  top: 20px;
+  bottom: 20px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.agent-resize-e {
+  right: 0;
+}
+.agent-resize-w {
+  left: 0;
+}
+.agent-resize-ne,
+.agent-resize-sw,
+.agent-resize-se,
+.agent-resize-nw {
+  width: 14px;
+  height: 14px;
+}
+.agent-resize-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.agent-resize-sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+.agent-resize-se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+.agent-resize-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
 }
 @keyframes agent-center-in {
   from {
@@ -2514,6 +2572,51 @@ input:focus-visible {
     rgba(91, 186, 164, 0.045) 62%,
     rgba(155, 231, 196, 0.025)
   );
+}
+.goal-start-button,
+.agent-goal-strip button {
+  position: relative;
+  z-index: 3;
+  padding: 6px 9px;
+  border: 1px solid rgba(155, 231, 196, 0.26);
+  border-radius: 8px;
+  color: #c8f2da;
+  background: rgba(155, 231, 196, 0.1);
+  font-size: 9px;
+  cursor: pointer;
+}
+.goal-start-button:hover,
+.agent-goal-strip button:hover {
+  background: rgba(155, 231, 196, 0.18);
+}
+.agent-goal-strip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 14px 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(155, 231, 196, 0.14);
+  border-radius: 10px;
+  color: #a7bbb5;
+  background: rgba(155, 231, 196, 0.045);
+  font-size: 9px;
+}
+.agent-goal-strip span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-goal-strip strong {
+  margin-right: 5px;
+  color: var(--accent);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+.agent-goal-strip small {
+  color: #82958f;
+  white-space: nowrap;
 }
 .agent-mode-banner::after {
   position: absolute;
