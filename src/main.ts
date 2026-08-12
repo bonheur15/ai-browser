@@ -1,6 +1,7 @@
 import path from "node:path";
 import { app, BaseWindow, ipcMain, nativeTheme, WebContentsView } from "electron";
 import { AgentEvidenceStore } from "./ai/agent-evidence-store";
+import { AgentMemoryStore } from "./ai/agent-memory-store";
 import { AgentRuntime } from "./ai/agent-runtime";
 import { AgentStateStore } from "./ai/agent-state-store";
 import { registerAgentIPC } from "./main/agent-ipc";
@@ -16,6 +17,7 @@ let stateStore: AppStateStore | null = null;
 let secretVault: SecretVault | null = null;
 let agentStateStore: AgentStateStore | null = null;
 let agentEvidenceStore: AgentEvidenceStore | null = null;
+let agentMemoryStore: AgentMemoryStore | null = null;
 let agentRuntime: AgentRuntime | null = null;
 let isQuitting = false;
 
@@ -84,6 +86,7 @@ const createWindow = async (): Promise<void> => {
   const initializedSecretVault = requireInitialized(secretVault, "Secret vault");
   const initializedAgentStateStore = requireInitialized(agentStateStore, "Agent state store");
   const initializedEvidenceStore = requireInitialized(agentEvidenceStore, "Agent evidence store");
+  const initializedMemoryStore = requireInitialized(agentMemoryStore, "Agent memory store");
   const runtime = new BrowserRuntime(
     window,
     initializedStateStore,
@@ -100,6 +103,7 @@ const createWindow = async (): Promise<void> => {
     runtime,
     initializedAgentStateStore,
     initializedEvidenceStore,
+    initializedMemoryStore,
     (event) => {
       if (!chrome.webContents.isDestroyed()) chrome.webContents.send("agent:event", event);
     },
@@ -142,6 +146,7 @@ app
     agentEvidenceStore = new AgentEvidenceStore(
       path.join(app.getPath("userData"), "agent-evidence"),
     );
+    agentMemoryStore = new AgentMemoryStore(path.join(app.getPath("userData"), "agent-memory"));
     await stateStore.load();
     await secretVault.load();
     await agentStateStore.load();
