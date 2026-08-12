@@ -80,6 +80,8 @@ const emptyAgentSnapshot: AgentSnapshot = {
     allowPrivate: false,
     maxTabs: 24,
   },
+  goals: [],
+  activeActivity: { kind: "idle", label: "Ready" },
 };
 
 const agentActionOptions: Array<[AgentActionClass, string]> = [
@@ -1620,6 +1622,17 @@ function AgentCommandCenter({
   const [showThreads, setShowThreads] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [size, setSize] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("ai-browser.agent-center-size") ?? "null") as {
+        width?: number;
+        height?: number;
+      } | null;
+      return { width: saved?.width ?? 760, height: saved?.height ?? 720 };
+    } catch {
+      return { width: 760, height: 720 };
+    }
+  });
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const centerRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{
@@ -1631,6 +1644,13 @@ function AgentCommandCenter({
     maxX: number;
     minY: number;
     maxY: number;
+  } | null>(null);
+  const resizeRef = useRef<{
+    edge: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
   } | null>(null);
   const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.activeThreadId);
   const policy = thread?.policy ?? snapshot.globalDefaults;
@@ -1644,6 +1664,7 @@ function AgentCommandCenter({
     candidate.title.toLowerCase().includes(threadQuery.toLowerCase()),
   );
   const lockedTabs = browserSnapshot.tabs.filter((tab) => tab.agentLock);
+  const activityLabel = snapshot.activeActivity.label;
 
   const updatePolicy = (update: Partial<AgentPolicy>): void => {
     if (thread)
@@ -1672,6 +1693,45 @@ function AgentCommandCenter({
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", stopDrag);
   };
+  const onResizeMove = (event: PointerEvent): void => {
+    const current = resizeRef.current;
+    if (!current) return;
+    const dx = event.clientX - current.x;
+    const dy = event.clientY - current.y;
+    const nextWidth = Math.max(
+      440,
+      Math.min(
+        window.innerWidth - 24,
+        current.width + (current.edge.includes("e") ? dx : current.edge.includes("w") ? -dx : 0),
+      ),
+    );
+    const nextHeight = Math.max(
+      360,
+      Math.min(
+        window.innerHeight - 24,
+        current.height + (current.edge.includes("s") ? dy : current.edge.includes("n") ? -dy : 0),
+      ),
+    );
+    setSize({ width: nextWidth, height: nextHeight });
+  };
+  const stopResize = (): void => {
+    resizeRef.current = null;
+    window.removeEventListener("pointermove", onResizeMove);
+    window.removeEventListener("pointerup", stopResize);
+  };
+  const startResize = (event: React.PointerEvent, edge: string): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeRef.current = {
+      edge,
+      x: event.clientX,
+      y: event.clientY,
+      width: size.width,
+      height: size.height,
+    };
+    window.addEventListener("pointermove", onResizeMove);
+    window.addEventListener("pointerup", stopResize);
+  };
   const startDrag = (event: React.PointerEvent): void => {
     if ((event.target as HTMLElement).closest("button")) return;
     const bounds = centerRef.current?.getBoundingClientRect();
@@ -1690,7 +1750,16 @@ function AgentCommandCenter({
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopDrag);
   };
-  useEffect(() => () => stopDrag(), []);
+  useEffect(
+    () => () => {
+      stopDrag();
+      stopResize();
+    },
+    [],
+  );
+  useEffect(() => {
+    localStorage.setItem("ai-browser.agent-center-size", JSON.stringify(size));
+  }, [size]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") onClose();
@@ -1709,7 +1778,12 @@ function AgentCommandCenter({
       ref={centerRef}
       className={`agent-center${expanded ? " is-expanded" : ""}`}
       style={
-        { "--agent-x": `${position.x}px`, "--agent-y": `${position.y}px` } as React.CSSProperties
+        {
+          "--agent-x": `${position.x}px`,
+          "--agent-y": `${position.y}px`,
+          "--agent-width": `${size.width}px`,
+          "--agent-height": `${size.height}px`,
+        } as React.CSSProperties
       }
       aria-label="Agent command center"
       role="dialog"
@@ -1730,7 +1804,7 @@ function AgentCommandCenter({
         <div className="agent-center-actions">
           <span className={`agent-live-status ${isRunning ? "is-working" : ""}`}>
             <i className="agent-live-dot" />
-            <span>{isRunning ? "Working" : "Ready"}</span>
+            <span>{activityLabel}</span>
           </span>
           <button
             className="agent-header-action"
@@ -1756,9 +1830,18 @@ function AgentCommandCenter({
         </div>
       </header>
 
+      {(["n", "e", "s", "w", "ne", "se", "sw", "nw"] as const).map((edge) => (
+        <span
+          className={`agent-resize-handle agent-resize-${edge}`}
+          key={edge}
+          onPointerDown={(event) => startResize(event, edge)}
+          aria-hidden="true"
+        />
+      ))}
+
       <div className="agent-mode-banner">
         <div>
-          <strong>{isRunning ? "Working across your browser" : "Ready when you are"}</strong>
+          <strong>{isRunning ? "Working across your browser" : activityLabel}</strong>
           <small>
             {lockedTabs.length
               ? `${lockedTabs.length} tab${lockedTabs.length === 1 ? "" : "s"} protected while I work`
@@ -1766,6 +1849,23 @@ function AgentCommandCenter({
           </small>
         </div>
         <span className="agent-banner-spark">✦</span>
+        {thread && (
+          <button
+            type="button"
+            className="goal-start-button"
+            onClick={() => {
+              const objective = window.prompt("What should this goal accomplish?", thread.title);
+              if (!objective?.trim()) return;
+              onDispatch({
+                type: "agent.goal.create",
+                threadId: thread.id,
+                objective: objective.trim(),
+              });
+            }}
+          >
+            + Goal
+          </button>
+        )}
       </div>
 
       <div className="agent-center-body">
@@ -1900,6 +2000,34 @@ function AgentCommandCenter({
                 Using <strong>{activeTab?.title || "current browser context"}</strong>
                 <small>{activeTab?.agentLock ? "protected" : "context shared"}</small>
               </div>
+              {snapshot.goals
+                .filter((goal) => goal.threadId === thread.id)
+                .slice(0, 1)
+                .map((goal) => (
+                  <div className="agent-goal-strip" key={goal.id}>
+                    <span>
+                      <strong>GOAL</strong> {goal.title}
+                    </span>
+                    <small>
+                      {goal.status} · {goal.iteration}/{goal.maxIterations}
+                    </small>
+                    {goal.status === "draft" || goal.status === "paused" ? (
+                      <button
+                        type="button"
+                        onClick={() => onDispatch({ type: "agent.goal.start", goalId: goal.id })}
+                      >
+                        Start
+                      </button>
+                    ) : goal.status === "running" ? (
+                      <button
+                        type="button"
+                        onClick={() => onDispatch({ type: "agent.goal.pause", goalId: goal.id })}
+                      >
+                        Pause
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
               <div className="agent-conversation" aria-live="polite">
                 {snapshot.messages.length === 0 && (
                   <div className="agent-welcome">
