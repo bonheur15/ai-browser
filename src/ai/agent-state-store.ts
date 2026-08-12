@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   AgentActionTrace,
+  AgentGoal,
   AgentMessage,
   AgentPersistedState,
   AgentPersistedThread,
@@ -34,12 +35,13 @@ export const defaultAgentPolicy = (): AgentPolicy => ({
 });
 
 const defaultState = (): AgentPersistedState => ({
-  version: 1,
+  version: 2,
   threads: [],
   messages: [],
   actions: [],
   activeThreadId: null,
   globalDefaults: defaultAgentPolicy(),
+  goals: [],
 });
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -101,7 +103,12 @@ const isAction = (value: unknown): value is AgentActionTrace => {
 };
 
 const validState = (value: unknown): value is AgentPersistedState => {
-  if (!isObject(value) || value.version !== 1 || !isPolicy(value.globalDefaults)) return false;
+  if (
+    !isObject(value) ||
+    (value.version !== 1 && value.version !== 2) ||
+    !isPolicy(value.globalDefaults)
+  )
+    return false;
   return (
     Array.isArray(value.threads) &&
     value.threads.every(isThread) &&
@@ -109,6 +116,7 @@ const validState = (value: unknown): value is AgentPersistedState => {
     value.messages.every(isMessage) &&
     Array.isArray(value.actions) &&
     value.actions.every(isAction) &&
+    (value.version === 1 || (Array.isArray(value.goals) && value.goals.every(isGoal))) &&
     (value.activeThreadId === null || typeof value.activeThreadId === "string")
   );
 };
@@ -132,7 +140,9 @@ export class AgentStateStore {
         this.state = {
           ...defaultState(),
           ...parsed,
+          version: 2,
           globalDefaults: normalizePolicy(parsed.globalDefaults),
+          goals: parsed.version === 2 && Array.isArray(parsed.goals) ? parsed.goals : [],
           threads: parsed.threads.map((thread) => ({
             ...thread,
             policy: normalizePolicy(thread.policy),
@@ -174,6 +184,44 @@ export class AgentStateStore {
 
   getActions(threadId: string): AgentActionTrace[] {
     return structuredClone(this.state.actions.filter((action) => action.threadId === threadId));
+  }
+
+  getGoals(): AgentGoal[] {
+    return structuredClone(this.state.goals);
+  }
+
+  getGoal(goalId: string): AgentGoal | undefined {
+    const goal = this.state.goals.find((candidate) => candidate.id === goalId);
+    return goal ? structuredClone(goal) : undefined;
+  }
+
+  createGoal(
+    input: Omit<
+      AgentGoal,
+      "id" | "createdAt" | "updatedAt" | "iteration" | "lastCheckpoint" | "lastAction"
+    >,
+  ): AgentGoal {
+    const timestamp = now();
+    const goal: AgentGoal = {
+      ...input,
+      id: randomUUID(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      iteration: 0,
+      lastCheckpoint: null,
+      lastAction: null,
+    };
+    this.state.goals.unshift(goal);
+    this.scheduleWrite();
+    return structuredClone(goal);
+  }
+
+  updateGoal(goalId: string, update: Partial<AgentGoal>): AgentGoal {
+    const goal = this.state.goals.find((candidate) => candidate.id === goalId);
+    if (!goal) throw new Error("Agent goal not found");
+    Object.assign(goal, update, { updatedAt: now() });
+    this.scheduleWrite();
+    return structuredClone(goal);
   }
 
   createThread(input?: {
@@ -318,6 +366,28 @@ export class AgentStateStore {
     await this.writeChain;
   }
 }
+
+const isGoal = (value: unknown): value is AgentGoal => {
+  if (!isObject(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.threadId === "string" &&
+    typeof value.title === "string" &&
+    typeof value.objective === "string" &&
+    ["draft", "running", "sleeping", "paused", "completed", "error", "stopped"].includes(
+      String(value.status),
+    ) &&
+    typeof value.createdAt === "string" &&
+    typeof value.updatedAt === "string" &&
+    (typeof value.endsAt === "string" || value.endsAt === null) &&
+    (typeof value.wakeAt === "string" || value.wakeAt === null) &&
+    typeof value.iteration === "number" &&
+    typeof value.maxIterations === "number" &&
+    (value.allowedOrigins === null || Array.isArray(value.allowedOrigins)) &&
+    (typeof value.lastCheckpoint === "string" || value.lastCheckpoint === null) &&
+    (typeof value.lastAction === "string" || value.lastAction === null)
+  );
+};
 
 export const normalizePolicy = (policy: AgentPolicy): AgentPolicy => ({
   mode: policy.mode,
