@@ -23,6 +23,7 @@ Spaces keep browsing contexts separate. Personal, Work, and Private Spaces can h
 - Agent modes: Full, Guided, and Observe.
 - Bounded browser-agent tools for page context, navigation, tabs, interaction, credentials, and screenshots.
 - Local agent thread state and downscaled evidence thumbnails.
+- Durable Goals with checkpointing, sleep/wake scheduling, compressed transcript archives, and agent memory search.
 
 ![Work Space](docs/screenshots/work-space.png)
 
