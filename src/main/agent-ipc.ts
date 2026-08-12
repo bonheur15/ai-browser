@@ -17,6 +17,11 @@ const COMMAND_TYPES = new Set([
   "agent.policy.update",
   "agent.model.update",
   "agent.approval.respond",
+  "agent.goal.create",
+  "agent.goal.start",
+  "agent.goal.pause",
+  "agent.goal.stop",
+  "agent.goal.sleep",
 ]);
 
 export const registerAgentIPC = (window: BaseWindow, runtime: AgentRuntime): void => {
@@ -74,6 +79,20 @@ const isAgentCommand = (value: unknown): value is AgentCommand => {
         isString(value.approvalId) &&
         typeof value.approved === "boolean"
       );
+    case "agent.goal.create":
+      return (
+        isString(value.threadId) &&
+        isString(value.objective) &&
+        (value.title === undefined || isString(value.title)) &&
+        (value.endsAt === undefined || value.endsAt === null || isString(value.endsAt)) &&
+        (value.maxIterations === undefined || typeof value.maxIterations === "number")
+      );
+    case "agent.goal.start":
+    case "agent.goal.pause":
+    case "agent.goal.stop":
+      return isString(value.goalId);
+    case "agent.goal.sleep":
+      return isString(value.goalId) && isString(value.until);
   }
   return false;
 };
