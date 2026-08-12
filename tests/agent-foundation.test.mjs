@@ -7,6 +7,7 @@ import test from "node:test";
 const { AgentStateStore, defaultAgentPolicy } = await import(
   "../dist-electron/ai/agent-state-store.js"
 );
+const { AgentMemoryStore } = await import("../dist-electron/ai/agent-memory-store.js");
 const { AgentPolicyEngine } = await import("../dist-electron/ai/agent-policy.js");
 
 const space = (id, kind = "persistent") => ({
@@ -143,6 +144,103 @@ test("global Agent defaults only affect threads created after the update", async
     assert.equal(existing.policy.mode, "guided");
     assert.equal(next.policy.mode, "observe");
     assert.equal(store.getThread(existing.id).policy.mode, "guided");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("goals persist lifecycle state and migrate with agent state", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ai-browser-agent-goal-"));
+  try {
+    const statePath = path.join(directory, "agent-state.json");
+    const store = new AgentStateStore(statePath);
+    await store.load();
+    const thread = store.createThread({ title: "Long task" });
+    const goal = store.createGoal({
+      threadId: thread.id,
+      title: "Daily research",
+      objective: "Review the approved sources",
+      status: "draft",
+      endsAt: null,
+      wakeAt: null,
+      maxIterations: 10,
+      allowedOrigins: ["https://example.com"],
+    });
+    store.updateGoal(goal.id, {
+      status: "sleeping",
+      wakeAt: new Date(Date.now() + 60_000).toISOString(),
+      iteration: 2,
+    });
+    await store.flush();
+
+    const persisted = JSON.parse(await readFile(statePath, "utf8"));
+    assert.equal(persisted.version, 2);
+    assert.equal(persisted.goals[0].status, "sleeping");
+    const restored = new AgentStateStore(statePath);
+    await restored.load();
+    assert.equal(restored.getGoal(goal.id).iteration, 2);
+    assert.equal(restored.getGoal(goal.id).wakeAt !== null, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("memory compaction preserves the cold archive and ranks relevant checkpoints", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ai-browser-memory-"));
+  try {
+    const memory = new AgentMemoryStore(directory);
+    const messages = [
+      {
+        id: "m1",
+        threadId: "thread-1",
+        role: "user",
+        kind: "text",
+        text: "Research the approved documentation source",
+        createdAt: "2026-08-12T10:00:00.000Z",
+      },
+      {
+        id: "m2",
+        threadId: "thread-1",
+        role: "assistant",
+        kind: "text",
+        text: "The documentation source is https://example.com/docs",
+        createdAt: "2026-08-12T10:01:00.000Z",
+      },
+      {
+        id: "m3",
+        threadId: "thread-1",
+        role: "assistant",
+        kind: "text",
+        text: "A separate unrelated note about weather",
+        createdAt: "2026-08-12T10:02:00.000Z",
+      },
+    ];
+    const actions = [
+      {
+        id: "a1",
+        threadId: "thread-1",
+        toolName: "navigate",
+        actionClass: "navigate",
+        summary: "Navigate https://example.com/docs",
+        status: "succeeded",
+        startedAt: "2026-08-12T10:01:30.000Z",
+      },
+    ];
+    const chunks = await memory.compact("thread-1", messages, actions);
+    assert.equal(chunks.length, 1);
+    const hits = await memory.search("thread-1", "documentation source", 3);
+    assert.equal(hits.length, 1);
+    assert.match(hits[0].archiveExcerpt, /documentation/);
+    const archive = await memory.readArchive("thread-1");
+    assert.equal(archive.messages.length, 3);
+    assert.equal(archive.actions[0].toolName, "navigate");
+    assert.equal((await readFile(path.join(directory, "thread-1.archive.br"))).length > 0, true);
+    assert.equal(
+      (await readFile(path.join(directory, "thread-1.manifest.json"), "utf8")).includes(
+        "sourceMessageIds",
+      ),
+      true,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
